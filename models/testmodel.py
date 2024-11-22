@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 '''*******************************************************************
   - Project          : The Eye Of Sauron
   - File name        : testmodel.py
@@ -15,14 +14,4 @@ url = 'https://www.disu.ac.kr/community/notice?cidx=42&page=1'
 scraper.load('models/test.json')
 
 print(scraper.get_result_similar(url))
-=======
-from autoscraper import AutoScraper
-
-scraper = AutoScraper()
-url = 'https://www.disu.ac.kr/community/notice?cidx=42&page=1'
-
-scraper.load('models/test.json')
-
-print(scraper.get_result_similar(url))
->>>>>>> 9b1d5d0d630f361f579ab418372976a4468ba1c8
 #print(scraper.get_result_exact(url))
