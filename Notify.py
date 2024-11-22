@@ -1,3 +1,11 @@
+'''*******************************************************************
+  - Project          : The Eye Of Sauron
+  - File name        : Notify.py
+  - Description      : Notify fetched announcement
+  - Owner            : Seokmin.Kang
+  - Revision history : 1) 2024.11.21 : Initial release
+*******************************************************************'''
+
 import subprocess
 
 def Email(profile,title,date,url):

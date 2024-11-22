@@ -5,62 +5,41 @@
                 [
                     "[document]",
                     {
-                        "class": "",
-                        "style": ""
+                        "style": "",
+                        "class": ""
                     },
                     0
                 ],
                 [
                     "html",
                     {
-                        "class": "",
-                        "style": ""
+                        "style": "",
+                        "class": ""
                     },
                     0
                 ],
                 [
                     "body",
                     {
-                        "class": [
-                            "stretched"
-                        ],
-                        "style": ""
+                        "style": "",
+                        "class": ""
                     },
-                    0
+                    1
                 ],
                 [
                     "div",
                     {
-                        "class": [
-                            "clearfix"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "space-wrapper"
-                        ],
-                        "style": ""
+                        "style": "",
+                        "class": ""
                     },
                     0
                 ],
                 [
                     "section",
                     {
-                        "class": "",
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
                         "class": [
-                            "content-wrap"
+                            "notice_wrap",
+                            "cont_wrap"
                         ],
                         "style": ""
                     },
@@ -70,8 +49,7 @@
                     "div",
                     {
                         "class": [
-                            "container",
-                            "clearfix"
+                            "container"
                         ],
                         "style": ""
                     },
@@ -80,10 +58,16 @@
                 [
                     "div",
                     {
-                        "class": [
-                            "row"
-                        ],
-                        "style": ""
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "form",
+                    {
+                        "style": "",
+                        "class": ""
                     },
                     0
                 ],
@@ -91,25 +75,8 @@
                     "div",
                     {
                         "class": [
-                            "col-12"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": "",
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "board"
+                            "tbl_head01",
+                            "tbl_wrap"
                         ],
                         "style": ""
                     },
@@ -118,31 +85,26 @@
                 [
                     "table",
                     {
-                        "class": [
-                            "fixwidth",
-                            "table",
-                            "table-rows",
-                            "thcenter",
-                            "noborder",
-                            "va-m",
-                            "disu"
-                        ],
-                        "style": ""
+                        "style": "",
+                        "class": ""
                     },
                     0
                 ],
                 [
                     "tbody",
                     {
-                        "class": "",
-                        "style": ""
+                        "style": "",
+                        "class": ""
                     },
-                    0
+                    6
                 ],
                 [
                     "tr",
                     {
-                        "class": "",
+                        "class": [
+                            "bo_notice",
+                            "bo_notice even"
+                        ],
                         "style": ""
                     },
                     0
@@ -151,8 +113,17 @@
                     "td",
                     {
                         "class": [
-                            "title",
-                            "left"
+                            "td_subject"
+                        ],
+                        "style": "padding-left:0px"
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "bo_tit"
                         ],
                         "style": ""
                     },
@@ -161,8 +132,8 @@
                 [
                     "a",
                     {
-                        "class": "",
-                        "style": ""
+                        "style": "",
+                        "class": ""
                     }
                 ]
             ],

@@ -1,3 +1,11 @@
+'''*******************************************************************
+  - Project          : The Eye Of Sauron
+  - File name        : FetchEco.py
+  - Description      : Fetch Economics Anouncement
+  - Owner            : Seokmin.Kang
+  - Revision history : 1) 2024.11.21 : Initial release
+*******************************************************************'''
+
 from autoscraper import AutoScraper
 from Update import UpdateFetch,FetchSimilar
 import Notify

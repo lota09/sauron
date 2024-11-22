@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {
     "stack_list": [
         {
@@ -173,4 +174,181 @@
             "alias": ""
         }
     ]
+=======
+{
+    "stack_list": [
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "class": [
+                            "stretched"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "clearfix"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "space-wrapper"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "section",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "content-wrap"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "container",
+                            "clearfix"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "row"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "col-12"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "board"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "table",
+                    {
+                        "class": [
+                            "fixwidth",
+                            "table",
+                            "table-rows",
+                            "thcenter",
+                            "noborder",
+                            "va-m",
+                            "disu"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "tbody",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "tr",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "td",
+                    {
+                        "class": [
+                            "title",
+                            "left"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "a",
+                    {
+                        "class": "",
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": true,
+            "is_non_rec_text": null,
+            "url": "https://www.disu.ac.kr/community/notice?cidx=42&page=2",
+            "alias": ""
+        }
+    ]
+>>>>>>> 9b1d5d0d630f361f579ab418372976a4468ba1c8
 }
