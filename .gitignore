@@ -2,3 +2,4 @@
 models/test.json
 __pycache__/
 *.txt
+*.tar
