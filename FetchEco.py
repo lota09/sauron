@@ -7,15 +7,31 @@
 *******************************************************************'''
 
 from autoscraper import AutoScraper
-from Update import UpdateFetch,FetchSimilar
+from Update import *
 import Notify
+from Errors import *
 
 scraper = AutoScraper()
-url='https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1'
-profile="경제학과"
+url='https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page='
+page=1
+dept="경제학과"
+level="일반 공지사항"
 
-if (title:=UpdateFetch('models/eco-title-all.json',url,'eco-update.txt')):
-    date=FetchSimilar("models/eco-date.json",url)[0]
-    url=FetchSimilar("models/eco-url.json",url)[0]
+# 일반 공지사항 위치 찾기 - 최대 5번까지 시도
+while page <5:
+    alltitle=FetchSimilar("models/eco-title.json",f"{url}{page}")
+    boldtitle=FetchSimilar("models/eco-title-bold.json",f"{url}{page}")
+    
+    if len(alltitle)>len(boldtitle):
+        minoridx=len(boldtitle)
+        break
+    
+    if (page:= page+1) >= 5:
+        raise FetchError("Fetch Failed Major Announcements are everywhere.")
 
-    Notify.Email(profile,title,date,url)
+
+if (title:=ManualUpdate(alltitle[minoridx],'eco-update.txt')):
+    date=FetchSimilar("models/eco-date.json",f"{url}{page}")[minoridx]
+    url=FetchSimilar("models/eco-url.json",f"{url}{page}")[minoridx]
+
+    Notify.Email(dept,title,date,level,url)

@@ -1,7 +1,7 @@
 '''*******************************************************************
   - Project          : The Eye Of Sauron
-  - File name        : FetchUsaint.py
-  - Description      : Fetch Usaint Anouncement
+  - File name        : FetchEco.py
+  - Description      : Fetch Economics Anouncement
   - Owner            : Seokmin.Kang
   - Revision history : 1) 2024.11.21 : Initial release
 *******************************************************************'''
@@ -11,12 +11,12 @@ from Update import UpdateFetch,FetchSimilar
 import Notify
 
 scraper = AutoScraper()
-url='https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&keyword'
-dept="유세인트"
+url='https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1'
+dept="경제학과"
 level="주요 공지사항"
 
-if (title:=UpdateFetch('models/usaint-title.json',url,'usaint-update.txt')):
-    date=FetchSimilar("models/usaint-date.json",url)[0]
-    url=FetchSimilar("models/usaint-url.json",url)[0]
+if (title:=UpdateFetch('models/eco-title.json',url,'eco-update.txt')):
+    date=FetchSimilar("models/eco-date.json",url)[0]
+    url=FetchSimilar("models/eco-url.json",url)[0]
 
     Notify.Email(dept,title,date,level,url)

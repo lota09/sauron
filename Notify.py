@@ -8,16 +8,18 @@
 
 import subprocess
 
-def Email(profile,title,date,url):
+def Email(dept,title,date,level,url):
     # 덮어쓸 텍스트 정의
     email_content = f"""To: tjrals120@gmail.com
 From: tjrals120@gmail.com
 MIME-Version: 1.0
 Content-Type: text/html; charset=utf-8
-Subject: [{profile}]{title}
+Subject: [{dept}]{title}
 
 <html>
     <body>
+        <h3>{dept} {level}</h3>
+        <hr>
         <a href="{url}">{title}</a>
         <p>{date}</p>
     </body>
