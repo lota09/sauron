@@ -14,7 +14,8 @@ from Errors import *
 scraper = AutoScraper()
 url = 'https://www.disu.ac.kr/community/notice?cidx=42&page='
 page = 1
-profile = "차세대반도체학과"
+dept = "차세대반도체학과"
+level = "일반 공지사항"
 
 # 최대 5번까지 시도
 while page < 5:
@@ -32,4 +33,4 @@ if title:
     date = FetchSimilar("models/disu-date.json", f"{url}{page}")[0]
     url = FetchSimilar("models/disu-url.json", f"{url}{page}")[0]
 
-    Notify.Email(profile, title, date, url)
+    Notify.Email(dept, title, date, level, url)

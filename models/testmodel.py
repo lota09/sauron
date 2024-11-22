@@ -9,9 +9,17 @@
 from autoscraper import AutoScraper
 
 scraper = AutoScraper()
-url = 'https://www.disu.ac.kr/community/notice?cidx=42&page=1'
+
+url={'usaint':'https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&keyword',   \
+    'eco':'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1', \
+    'disu':'https://www.disu.ac.kr/community/notice?cidx=42&page=1'}
 
 scraper.load('models/test.json')
 
-print(scraper.get_result_similar(url))
-#print(scraper.get_result_exact(url))
+titles=scraper.get_result_similar(url['eco'])
+#titles=scraper.get_result_exact(url['usaint'])
+
+length=len(titles)
+
+print(titles)
+print(length)
