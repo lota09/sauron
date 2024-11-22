@@ -12,10 +12,11 @@ import Notify
 
 scraper = AutoScraper()
 url='https://www.disu.ac.kr/community/notice?cidx=42&page=1'
-profile="차세대반도체학과"
+dept="차세대반도체학과"
+level="주요 공지사항"
 
 if (title:=UpdateFetch('models/disu-title-bold.json',url,'disu-update-bold.txt')):
     date=FetchSimilar("models/disu-date-bold.json",url)[0]
     url=FetchSimilar("models/disu-url-bold.json",url)[0]
 
-    Notify.Email(profile,title,date,url)
+    Notify.Email(dept,title,date,level,url)
