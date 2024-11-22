@@ -10,8 +10,7 @@ import subprocess
 
 def Email(profile,title,date,url):
     # 덮어쓸 텍스트 정의
-    email_content = f"""\
-To: tjrals120@gmail.com
+    email_content = f"""To: tjrals120@gmail.com
 From: tjrals120@gmail.com
 MIME-Version: 1.0
 Content-Type: text/html; charset=utf-8
@@ -22,7 +21,7 @@ Subject: [{profile}]{title}
         <a href="{url}">{title}</a>
         <p>{date}</p>
     </body>
-</html>\
+</html>
 """
 
     # 파일에 텍스트 덮어쓰기
