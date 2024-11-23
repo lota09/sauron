@@ -94,7 +94,7 @@ def UpdateDisu():
     page=1  
     result={
         'dept': '차세대반도체학과',
-        'title': UpdateFetch('models/eco-title.json',eco_url,'eco-update.txt'),
+        'title':None,
         'date': None,
         'level': '일반 공지사항',
         'url': None,
