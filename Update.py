@@ -5,6 +5,7 @@
   - Owner            : Seokmin.Kang
   - Revision history : 1) 2024.11.21 : Initial release
 *******************************************************************'''
+# -*- coding: utf-8 -*-
 
 from autoscraper import AutoScraper
 import os
