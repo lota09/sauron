@@ -40,7 +40,7 @@ class CompletionExecutor:
     def execute(self, completion_request):
         res = self._send_request(completion_request)
         if res['status']['code'] == '20000':
-            print("Input Tokens:", res['result']['inputTokens'])
+            #print("Input Tokens:", res['result']['inputTokens'])
             return res['result']['text']
         else:
             raise SummaryError("Error Code:", res['status']['code'])
