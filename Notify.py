@@ -5,26 +5,12 @@
   - Owner            : Seokmin.Kang
   - Revision history : 1) 2024.11.21 : Initial release
 *******************************************************************'''
+# -*- coding: utf-8 -*-
 
 import subprocess
 
-def Email(dept,title,date,level,url):
-    # 덮어쓸 텍스트 정의
-    email_content = f"""To: tjrals120@gmail.com
-From: tjrals120@gmail.com
-MIME-Version: 1.0
-Content-Type: text/html; charset=utf-8
-Subject: [{dept}]{title}
+def Email(email_content):
 
-<html>
-    <body>
-        <h3>{dept} {level}</h3>
-        <hr>
-        <a href="{url}">{title}</a>
-        <p>{date}</p>
-    </body>
-</html>
-"""
 
     # 파일에 텍스트 덮어쓰기
     with open("email.txt", "w", encoding="utf-8") as file:
