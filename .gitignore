@@ -3,4 +3,5 @@ __pycache__/
 *.txt
 *.tar
 /clovastudio-api-info.json
+kakao-api-info.json
 .*/
