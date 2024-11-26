@@ -12,7 +12,7 @@ fi
 
 # 설정
 REDIRECT_URI="http://localhost:8080"
-AUTHORIZE_URL="https://kauth.kakao.com/oauth/authorize?response_type=code&client_id=${REST_API_KEY}&redirect_uri=${REDIRECT_URI}"
+AUTHORIZE_URL="https://kauth.kakao.com/oauth/authorize?response_type=code&client_id=${REST_API_KEY}&redirect_uri=${REDIRECT_URI}&scope=friends,talk_message"
 TOKEN_URL="https://kauth.kakao.com/oauth/token"  # 카카오 토큰 요청 URL
 
 echo "Opening browser for user authentication..."
@@ -35,6 +35,7 @@ wait
 
 if [[ -z "$AUTHORIZE_CODE" ]]; then
     echo "Error: No authentication code received within the timeout period."
+    echo -e "------REQ-------\n$REQ"
     exit 1
 fi
 
@@ -52,6 +53,11 @@ RESPONSE=$(curl -s -X POST "${TOKEN_URL}" \
     -d "code=${AUTHORIZE_CODE}")
 
 REFRESH_TOKEN=$(echo "$RESPONSE" | jq -r '.refresh_token')
+
+if [[ -z "$REFRESH_TOKEN" ]]; then
+    echo "Error: No authentication code received within the timeout period."
+    exit 1
+fi
 
 # AUTH_CODE 업데이트
 jq --arg refresh_token "$REFRESH_TOKEN" '.REFRESH_TOKEN = $refresh_token' "$JSON_FILE" > tmp.json && mv tmp.json "$JSON_FILE"

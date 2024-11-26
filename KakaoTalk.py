@@ -7,7 +7,8 @@ API_INFO_PATH = 'kakao-api-info.json'
 
 # 카카오 URL
 TOKEN_URL = "https://kauth.kakao.com/oauth/token"
-KAKAO_API_URL = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
+KAKAO_API_URL_SELF = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
+KAKAO_API_URL_FRIEND = "https://kapi.kakao.com/v1/api/talk/friends/message/default/send"
 
 def get_api_info():
     """ kakao-api-info.json 파일에서 REST_API_KEY 정보를 읽어옴 """
@@ -43,58 +44,117 @@ def SendSelfMessage(components):
     """
     카카오톡 메시지를 보내는 함수. 필요시 ACCESS_TOKEN을 갱신.
     """
-    try:
-        # 1. Access Token 발급 또는 갱신
-        access_token = get_access_token()
+
+    # 1. Access Token 발급 또는 갱신
+    access_token = get_access_token()
         
-        #메시지 구성요소
-        dept= components['dept']
-        title= components['title']
-        level= components['level']
-        url= components['url']
-        summary= components['summary']
+    #메시지 구성요소
+    dept= components['dept']
+    title= components['title']
+    level= components['level']
+    url= components['url']
+    summary= components['summary']
 
-        # 2. 메시지 템플릿 구성
-        payload = \
-            {
-                "template_object": json.dumps(
-                    {
-                        "object_type": "feed",
-                        "content": {
-                            "title": title,
-                            "description": summary,
-                            "link": {
-                                "web_url": url,
-                                "mobile_web_url": url,
-                            }
-                        },
-                        "item_content": { 
-                            "profile_text": f"{dept} {level}",
-                            "profile_image_url": "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg",
+    # 2. 메시지 템플릿 구성
+    payload = \
+        {
+            "template_object": json.dumps(
+                {
+                    "object_type": "feed",
+                    "content": {
+                        "title": title,
+                        "description": summary,
+                        "link": {
+                            "web_url": url,
+                            "mobile_web_url": url,
                         }
+                    },
+                    "item_content": { 
+                        "profile_text": f"{dept} {level}",
+                        "profile_image_url": "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg",
                     }
-                )
-            }
-
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/x-www-form-urlencoded;charset=utf-8"
+                }
+            )
         }
 
-        # 3. 메시지 전송 요청
-        response = requests.post(KAKAO_API_URL, headers=headers, data=payload)
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/x-www-form-urlencoded;charset=utf-8"
+    }
 
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise KakaoTalkError("메시지 전송 실패:", response.status_code, response.text)
+    # 3. 메시지 전송 요청
+    response = requests.post(KAKAO_API_URL_SELF, headers=headers, data=payload)
+    
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise KakaoTalkError(f"메시지 전송 실패: {response.text}")
 
-    except Exception as e:
-        raise KakaoTalkError
 
+def SendFriendMessage(components,receiver_uuids):
+    """
+    카카오톡 메시지를 보내는 함수. 필요시 ACCESS_TOKEN을 갱신.
+    """
+
+    # 1. Access Token 발급 또는 갱신
+    access_token = get_access_token()
+        
+    #메시지 구성요소
+    dept= components['dept']
+    title= components['title']
+    level= components['level']
+    url= components['url']
+    summary= components['summary']
+
+    # 2. 메시지 템플릿 구성
+    payload = \
+        {
+            "receiver_uuids": json.dumps(receiver_uuids),
+            "template_object": json.dumps(
+                {
+                    "object_type": "feed",
+                    "content": {
+                        "title": title,
+                        "description": summary,
+                        "link": {
+                            "web_url": url,
+                            "mobile_web_url": url,
+                        }
+                    },
+                    "item_content": { 
+                        "profile_text": f"{dept} {level}",
+                        "profile_image_url": "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg",
+                    }
+                }
+            )
+        }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/x-www-form-urlencoded;charset=utf-8"
+    }
+
+    # 3. 메시지 전송 요청
+    response = requests.post(KAKAO_API_URL_FRIEND, headers=headers, data=payload)
+    
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise KakaoTalkError(f"메시지 전송 실패: {response.text}")
 
 
 # 테스트
 if __name__ == "__main__":
-    message = f"안녕하세요! 카카오 API를 통해 전송된 메시지입니다."
-    SendSelfMessage("https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&slug=%EA%B5%90%EC%96%91%EA%B5%90%EC%9C%A1%EC%97%B0%EA%B5%AC%EC%84%BC%ED%84%B0-2024-2%ED%95%99%EA%B8%B0-%EA%B5%90%EC%96%91%EA%B5%90%EC%9C%A1-%ED%98%81%EC%8B%A0%EC%88%98%EC%97%85%EB%AA%A8%ED%98%95engaged-4&keyword")
+    receiver_uuids=["jL-Iu4K3hbeEqJqomaiZr5iulrqLuoy-jrqD7A"]
+    components = \
+        {
+            'dept': '차세대반도체학과',
+            'title': '차세대반도체학과 반도체 세미나 I Advanced Package 이해 I 2024. 11. 20. (수) I 반도체산업이해(특강)',
+            'date': '2024-11-18', 'level': '일반 공지사항', 'url': 'https://www.disu.ac.kr/community/notice?md=v&bbsidx=7978',
+            'summary': '- 숭실대학교 차세대반도체학과에서 반도체 산업이해 오픈 특강을 진행함\n- 반도체 산업에서 패키지의 중요성에 대해 이해하는 시간이 되기를 바람'
+        }
+    #result=SendSelfMessage(components)
+    result=SendFriendMessage(components,receiver_uuids)
+    
+    print(result)
+    

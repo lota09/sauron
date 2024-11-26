@@ -29,6 +29,8 @@ fetch_content=[
     Content.FetchEco,
 ]
 
+receiver_uuids=["jL-Iu4K3hbeEqJqomaiZr5iulrqLuoy-jrqD7A"]
+
 for idx, func in enumerate(fetch_overview):
     
     if (components := func()) is None:
@@ -41,5 +43,5 @@ for idx, func in enumerate(fetch_overview):
         components['summary']= ClovaSummary.Summarize(f"제목:{components['title']}\n내용:\n{content}")
     
     Notify.Email(components)
-    KakaoTalk.SendSelfMessage(components)
+    KakaoTalk.SendFriendMessage(components,receiver_uuids)
     
