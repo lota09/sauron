@@ -43,7 +43,7 @@ class CompletionExecutor:
             #print("Input Tokens:", res['result']['inputTokens'])
             return res['result']['text']
         else:
-            raise SummaryError("Error Code:", res['status']['code'])
+            raise SummaryError(f"Error Code : {res['status']['code']}")
             #return 'Error'
 
 
