@@ -64,7 +64,7 @@ def main():
     return 0
         
 if __name__ == "__main__":
-    for i in range(5):
+    for i in range(MAX_RETRIES):
         try:
             main()
             sys.exit(0)
