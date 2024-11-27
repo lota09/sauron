@@ -11,135 +11,165 @@ from autoscraper import AutoScraper
 from Update import *
 from Errors import *
 
+USAINT_URL='https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&keyword'
+ECO_URL='https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page='
+DISU_URL = 'https://www.disu.ac.kr/community/notice?cidx=42&page='
+BUFFER_FILES={
+    "usaint": "usaint-update.txt",
+    "disu": "disu-update.txt",
+    "disu_bold": "disu-update-bold.txt",
+    "eco": "eco-update.txt",
+    "eco_bold": "eco-update-bold.txt"
+}
+
 scraper = AutoScraper()
-usaint_url='https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&keyword'
-eco_url='https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page='
-disu_url = 'https://www.disu.ac.kr/community/notice?cidx=42&page='
 
-    
-#Notify.Email(dept,title,date,level,usaint_url)
-        
+def FetchSimilar(model,url):
+    scraper.load(model)
+    return scraper.get_result_similar(url)
+
+
 def UpdateUsaint():
+    MODEL_TITLE= "models/usaint-title.json"
+    MODEL_DATE= "models/usaint-date.json"
+    MODEL_URL= "models/usaint-url.json"
+    buffer_file= BUFFER_FILES['usaint']
+    
+    new_title= FetchSimilar(MODEL_TITLE,USAINT_URL)[0]
+    
+    if CheckLatest(new_title,buffer_file) is False:
+        return
 
-    result={
+    overview={
         'dept': '유세인트',
-        'title': UpdateFetch('models/usaint-title.json',usaint_url,'usaint-update.txt'),
-        'date': None,
+        'title': new_title,
+        'date': FetchSimilar(MODEL_DATE,USAINT_URL)[0],
         'level': '주요 공지사항',
-        'url': None,
+        'url': FetchSimilar(MODEL_URL,USAINT_URL)[0],
     }
 
-    if (result['title']):
-        result['date']=FetchSimilar("models/usaint-date.json",usaint_url)[0]
-        result['url']=FetchSimilar("models/usaint-url.json",usaint_url)[0]
-        
-        return result
+    return overview
+
+
+def UpdateDisuBold():
+    MODEL_TITLE= "models/disu-title-bold.json"
+    MODEL_DATE= "models/disu-date-bold.json"
+    MODEL_URL= "models/disu-url-bold.json"
+    buffer_file= BUFFER_FILES['disu_bold']
     
-    return
+    new_title= FetchSimilar(MODEL_TITLE,f"{DISU_URL}1")[0]
+    
+    if CheckLatest(new_title,buffer_file) is False:
+        return
+
+    overview={
+        'dept': '차세대반도체학과',
+        'title': new_title,
+        'date': FetchSimilar(MODEL_DATE,f"{DISU_URL}1")[0],
+        'level': '주요 공지사항',
+        'url': FetchSimilar(MODEL_URL,f"{DISU_URL}1")[0],
+    }
+
+    return overview
 
 
 def UpdateEcoBold():
+    MODEL_TITLE= "models/eco-title-bold.json"
+    MODEL_DATE= "models/eco-date.json"
+    MODEL_URL= "models/eco-url.json"
+    buffer_file= BUFFER_FILES['eco_bold']
     
-    result={
+    new_title= FetchSimilar(MODEL_TITLE,f"{ECO_URL}1")[0]
+    
+    if CheckLatest(new_title,buffer_file) is False:
+        return
+
+    overview={
         'dept': '경제학과',
-        'title': UpdateFetch('models/eco-title-bold.json',f"{eco_url}1",'eco-update-bold.txt'),
-        'date': None,
+        'title': new_title,
+        'date': FetchSimilar(MODEL_DATE,f"{ECO_URL}1")[0],
         'level': '주요 공지사항',
-        'url': None,
+        'url': FetchSimilar(MODEL_URL,f"{ECO_URL}1")[0],
     }
 
-    if (result['title']):
-        result['date']=FetchSimilar("models/eco-date.json",f"{eco_url}1")[0]
-        result['url']=FetchSimilar("models/eco-url.json",f"{eco_url}1")[0]
-        
-        return result
-    
-    return
-
-
-def UpdateEco():
-    page=1  
-    result={
-        'dept': '경제학과',
-        'title': None,
-        'date': None,
-        'level': '일반 공지사항',
-        'url': None,
-    }
-
-    # 일반 공지사항 위치 찾기 - 최대 5번까지 시도
-    while page <5:
-        alltitle=FetchSimilar("models/eco-title.json",f"{eco_url}{page}")
-        boldtitle=FetchSimilar("models/eco-title-bold.json",f"{eco_url}{page}")
-        
-        if len(alltitle)>len(boldtitle):
-            minoridx=len(boldtitle)
-            break
-        
-        if (page:= page+1) >= 5:
-            raise FetchError("Fetch Failed Major Announcements are everywhere.")
-
-    result['title']= ManualUpdate(alltitle[minoridx],'eco-update.txt')
-    
-    if (result['title']):
-        result['date']=FetchSimilar("models/eco-date.json",f"{eco_url}{page}")[minoridx]
-        result['url']=FetchSimilar("models/eco-url.json",f"{eco_url}{page}")[minoridx]
-        
-        return result
-    
-    return
+    return overview
 
 
 def UpdateDisu():
+    MODEL_TITLE="models/disu-title.json"
+    MODEL_DATE="models/disu-date.json"
+    MODEL_URL="models/disu-url.json"
+    buffer_file=BUFFER_FILES['disu']
+    
     page=1  
-    result={
-        'dept': '차세대반도체학과',
-        'title':None,
-        'date': None,
-        'level': '일반 공지사항',
-        'url': None,
-    }
 
     # 최대 5번까지 시도
     while page < 5:
         try:
-            result['title'] = UpdateFetch('models/disu-title.json', f"{disu_url}{page}", 'disu-update.txt')
+            new_title = FetchSimilar(MODEL_TITLE, f"{DISU_URL}{page}")[0]
             break
         except IndexError:
             if (page:= page+1) >= 5:
                 raise FetchError("Fetch Failed After 5 Pages.")
         except:
             raise FetchError()
-            
-    # 새로운 공지일때
-    if result['title']:
-        result['date'] = FetchSimilar("models/disu-date.json", f"{disu_url}{page}")[0]
-        result['url'] = FetchSimilar("models/disu-url.json", f"{disu_url}{page}")[0]
+    
+    if CheckLatest(new_title,buffer_file) is False:
+        return
         
-        return result
-    
-    return
-
-
-def UpdateDisuBold():
-    
-    result={
+    overview={
         'dept': '차세대반도체학과',
-        'title': UpdateFetch('models/disu-title-bold.json',f"{disu_url}1",'disu-update-bold.txt'),
-        'date': None,
-        'level': '주요 공지사항',
-        'url': None,
+        'title': new_title,
+        'date': FetchSimilar(MODEL_DATE, f"{DISU_URL}{page}")[0],
+        'level': '일반 공지사항',
+        'url': FetchSimilar(MODEL_URL, f"{DISU_URL}{page}")[0],
     }
-
-    if (result['title']):
-        result['date']=FetchSimilar("models/disu-date-bold.json",f"{disu_url}1")[0]
-        result['url']=FetchSimilar("models/disu-url-bold.json",f"{disu_url}1")[0]
-        
-        return result
     
-    return
+    return overview
+
+
+def UpdateEco():
+    MODEL_TITLE_ALL= "models/eco-title.json"
+    MODEL_TITLE_BOLD= "models/eco-title-bold.json"
+    MODEL_DATE= "models/eco-date.json"
+    MODEL_URL= "models/eco-url.json"
+    buffer_file=BUFFER_FILES['eco']
+    
+    page=1  
+
+    # 일반 공지사항 위치 찾기 - 최대 5번까지 시도
+    while page <5:
+        titles_all=FetchSimilar(MODEL_TITLE_ALL,f"{ECO_URL}{page}")
+        titles_bold=FetchSimilar(MODEL_TITLE_BOLD,f"{ECO_URL}{page}")
         
+        if len(titles_all)>len(titles_bold):
+            pivot=len(titles_bold)
+            break
+        
+        if (page:= page+1) >= 5:
+            raise FetchError("Fetch Failed Major Announcements are everywhere.")
+        
+    new_title= titles_all[pivot]
+    
+    if CheckLatest(new_title,buffer_file) is False:
+        return
+        
+    overview={
+        'dept': '경제학과',
+        'title': new_title,
+        'date': FetchSimilar(MODEL_DATE,f"{ECO_URL}{page}")[pivot],
+        'level': '일반 공지사항',
+        'url': FetchSimilar(MODEL_URL,f"{ECO_URL}{page}")[pivot],
+    }
+    
+    return overview
+
+
+
+
 
 if __name__ == '__main__':
-    result=UpdateDisuBold()
+    result=UpdateUsaint()
     print(result)
+    if result:
+        UpdateLatest(result['title'],"usaint-update.txt")
