@@ -15,11 +15,11 @@ USAINT_URL='https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&cat
 ECO_URL='https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page='
 DISU_URL = 'https://www.disu.ac.kr/community/notice?cidx=42&page='
 BUFFER_FILES={
-    "usaint": "usaint-update.txt",
-    "disu": "disu-update.txt",
-    "disu_bold": "disu-update-bold.txt",
-    "eco": "eco-update.txt",
-    "eco_bold": "eco-update-bold.txt"
+    "usaint": "buffers/usaint-update.txt",
+    "disu": "buffers/disu-update.txt",
+    "disu_bold": "buffers/disu-update-bold.txt",
+    "eco": "buffers/eco-update.txt",
+    "eco_bold": "buffers/eco-update-bold.txt"
 }
 
 scraper = AutoScraper()
@@ -172,4 +172,4 @@ if __name__ == '__main__':
     result=UpdateUsaint()
     print(result)
     if result:
-        UpdateLatest(result['title'],"usaint-update.txt")
+        UpdateLatest(result['title'],BUFFER_FILES['usaint'])
