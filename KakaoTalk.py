@@ -8,45 +8,12 @@
 
 import json
 import requests
-from Errors import *
+from KakaoAuth import *
+from Errors import KakaoTalkError
 
-# kakao-api-info.json 파일 경로
-API_INFO_PATH = 'kakao-api-info.json'
-
-# 카카오 URL
-TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 KAKAO_API_URL_SELF = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
 KAKAO_API_URL_FRIEND = "https://kapi.kakao.com/v1/api/talk/friends/message/default/send"
 
-def get_api_info():
-    """ kakao-api-info.json 파일에서 REST_API_KEY 정보를 읽어옴 """
-    with open(API_INFO_PATH, 'r', encoding='utf-8') as file:
-        return json.load(file)
-
-def get_access_token():
-    """
-    refresh_token 으로 Access Token을 새로 발급
-    """
-    api_info = get_api_info()
-    rest_api_key = api_info['REST_API_KEY']
-    REFRESH_TOKEN=api_info['REFRESH_TOKEN']
-    
-    payload = {
-        "grant_type": "refresh_token",
-        "client_id": rest_api_key,
-        "refresh_token": REFRESH_TOKEN,
-    }
-
-    response = requests.post(TOKEN_URL, data=payload)
-
-    if response.status_code == 200:
-        data = response.json()
-        access_token = data.get("access_token")
-        if not access_token:
-            raise ValueError("ACCESS_TOKEN 갱신 실패.")
-        return access_token
-    else:
-        raise ValueError(f"ACCESS_TOKEN 발급 실패: {response.status_code}, {response.text}")
 
 def SendSelfMessage(components):
     """

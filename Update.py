@@ -29,6 +29,9 @@ def CheckLatest(new_title,file_path):
 def UpdateLatest(new_title,file_path):
     
     #new_title = unicodedata.normalize('NFC', new_title) #이걸 하면 메모장에서 자모 분리 문제가 해결되는 대신 CheckLatest에서도 똑같이 이걸 해줘야함.
+    #부모 디렉터리 없으면 생성
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
     #최신 제목 갱신
     with open(file_path, 'w', encoding='utf-8') as file:
         file.write(new_title + '\n')
