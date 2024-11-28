@@ -1,3 +1,11 @@
+'''*******************************************************************
+  - Project          : The Eye Of Sauron
+  - File name        : KakaoTalk.py
+  - Description      : Process Kakao APIs
+  - Owner            : Seokmin.Kang
+  - Revision history : 1) 2024.11.26 : Initial release
+*******************************************************************'''
+
 import json
 import requests
 from Errors import *
