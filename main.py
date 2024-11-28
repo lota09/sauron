@@ -47,18 +47,23 @@ def main():
 
     for func_idx, func in enumerate(func_overview):
         
+        #공지 개요 가져오기, 최신 공지 비교
         if (components := func()) is None:
             continue
         
+        #공지 내용 가져오기
         content= func_content[func_idx](components['url'])
-        components['summary']= ''
         
+        #클로바 요약
+        components['summary']= ''
         if (content):
             components['summary']= ClovaSummary.Summarize(f"제목:{components['title']}\n내용:\n{content}")
         
+        #최신 공지 전달
         Notify.Email(components)
         KakaoTalk.SendFriendMessage(components,receiver_uuids)
         
+        #최신 공지 갱신
         UpdateLatest(components['title'],buffer_files[func_idx])
         
     return 0
