@@ -1,7 +1,6 @@
 models/test.json
 __pycache__/
-*.txt
+buffers/
 *.tar
-/clovastudio-api-info.json
-kakao-api-info.json
+api_infos/
 .*/

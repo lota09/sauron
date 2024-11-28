@@ -12,6 +12,7 @@ import json
 import os
 from Errors import SummaryError
 
+API_INFO_FILE = 'api_infos/clovastudio-api-info.json'
 
 class CompletionExecutor:
     def __init__(self, host, api_key, api_key_primary_val, request_id, url_key):
@@ -67,8 +68,7 @@ def load_api_info(file_path):
 def Summarize(content):
     """Summarize the given content using Clova Studio API."""
     # Load API keys and configuration
-    api_info_file = 'clovastudio-api-info.json'
-    api_info = load_api_info(api_info_file)
+    api_info = load_api_info(API_INFO_FILE)
 
     # Create an instance of CompletionExecutor
     completion_executor = CompletionExecutor(

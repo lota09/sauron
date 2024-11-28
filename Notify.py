@@ -7,8 +7,10 @@
 *******************************************************************'''
 # -*- coding: utf-8 -*-
 
+import os
 import subprocess
-import Errors
+
+EMAIL_FILE = "buffers/email.txt"
 
 def Email(components):
     
@@ -39,12 +41,16 @@ Subject: [{dept}]{title}
 """
 
     # 파일에 텍스트 덮어쓰기
-    with open("email.txt", "w", encoding="utf-8") as file:
+    
+    #부모 디렉터리 없으면 생성
+    os.makedirs(os.path.dirname(EMAIL_FILE), exist_ok=True)
+    
+    with open(EMAIL_FILE, "w", encoding="utf-8") as file:
         file.write(email_content)
 
     try:
         subprocess.run(
-        "cat email.txt | ssmtp -v -t",
+        f"cat {EMAIL_FILE} | ssmtp -v -t",
         shell=True,  # 파이프를 처리하기 위해 shell=True 사용
         text=True,
         stdout=subprocess.PIPE,  # 표준 출력 캡처
