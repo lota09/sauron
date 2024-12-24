@@ -11,6 +11,8 @@ from autoscraper import AutoScraper
 from Update import *
 from Errors import *
 
+MAX_PAGES = 5
+
 USAINT_URL='https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&keyword'
 ECO_URL='https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page='
 DISU_URL = 'https://www.disu.ac.kr/community/notice?cidx=42&page='
@@ -100,19 +102,18 @@ def UpdateDisu():
     MODEL_DATE="models/disu-date.json"
     MODEL_URL="models/disu-url.json"
     buffer_file=BUFFER_FILES['disu']
-    
-    page=1  
 
     # 최대 5번까지 시도
-    while page < 5:
+    for page in range (1,MAX_PAGES+1):
         try:
             new_title = FetchSimilar(MODEL_TITLE, f"{DISU_URL}{page}")[0]
             break
         except IndexError:
-            if (page:= page+1) >= 5:
-                raise FetchError("Fetch Failed After 5 Pages.")
-        except:
-            raise FetchError()
+            continue
+        except Exception as e:
+            raise FetchError() from e
+    else:
+        raise FetchError("Fetch Failed After 5 Pages.")
     
     if CheckLatest(new_title,buffer_file) is False:
         return
@@ -134,20 +135,17 @@ def UpdateEco():
     MODEL_DATE= "models/eco-date.json"
     MODEL_URL= "models/eco-url.json"
     buffer_file=BUFFER_FILES['eco']
-    
-    page=1  
 
     # 일반 공지사항 위치 찾기 - 최대 5번까지 시도
-    while page <5:
+    for page in range (1,MAX_PAGES+1):
         titles_all=FetchSimilar(MODEL_TITLE_ALL,f"{ECO_URL}{page}")
         titles_bold=FetchSimilar(MODEL_TITLE_BOLD,f"{ECO_URL}{page}")
         
         if len(titles_all)>len(titles_bold):
             pivot=len(titles_bold)
             break
-        
-        if (page:= page+1) >= 5:
-            raise FetchError("Fetch Failed Major Announcements are everywhere.")
+    else:
+        raise FetchError("Fetch Failed, Major Announcements are everywhere.")
         
     new_title= titles_all[pivot]
     
