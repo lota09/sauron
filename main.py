@@ -61,7 +61,7 @@ def main():
             components['summary']= ClovaSummary.Summarize(f"제목:{components['title']}\n내용:\n{content}")
         
         #최신 공지 전달
-        Notify.Email(components)
+        #Notify.Email(components)
         KakaoTalk.SendFriendMessage(components,RECV_UUID)
         
         #최신 공지 갱신
