@@ -10,8 +10,9 @@
 import Overview
 import Content
 import ClovaSummary
-import Notify
+#import Notify
 import KakaoTalk
+from Errors import KakaoTalkError
 from Update import UpdateLatest
 from datetime import datetime
 
@@ -47,25 +48,34 @@ def main():
     buffer_files=list(Overview.BUFFER_FILES.values())
 
     for func_idx, func in enumerate(func_overview):
-        
-        #공지 개요 가져오기, 최신 공지 비교
-        if (components := func()) is None:
-            continue
-        
-        #공지 내용 가져오기
-        content= func_content[func_idx](components['url'])
-        
-        #클로바 요약
-        components['summary']= ''
-        if (content):
-            components['summary']= ClovaSummary.Summarize(f"제목:{components['title']}\n내용:\n{content}")
-        
-        #최신 공지 전달
-        #Notify.Email(components)
-        KakaoTalk.SendFriendMessage(components,RECV_UUID)
-        
-        #최신 공지 갱신
-        UpdateLatest(components['title'],buffer_files[func_idx])
+
+        for i in range(MAX_RETRIES):
+
+            #공지 개요 가져오기, 최신 공지 비교
+            if (components := func()) is None:
+                break
+            
+            #공지 내용 가져오기
+            content= func_content[func_idx](components['url'])
+            
+            #클로바 요약
+            components['summary']= ''
+            if (content):
+                components['summary']= ClovaSummary.Summarize(f"제목:{components['title']}\n내용:\n{content}")
+            
+            #최신 공지 전달
+            #Notify.Email(components)
+            KakaoTalk.SendFriendMessage(components,RECV_UUID)
+            
+            #최신 공지 갱신
+            UpdateLatest(components['title'],buffer_files[func_idx])
+
+            #
+            if (components['latest']):
+                break
+        else:
+            raise IndexError(f"Announcement Still Outdated After {MAX_RETRIES} Fetchs. \nOutdated Data :{components}")
+
 
     #최신화 시간 갱신
     formatted_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S") # format : 2024-12-24 14:35:22
@@ -78,12 +88,18 @@ if __name__ == "__main__":
         try:
             main()
             sys.exit(0)
+        except KakaoTalkError as e:
+            print(f"Encountered Unexpected KakaoTalkError :\n{e}")
+            raise e
         except (ConnectionError, RemoteDisconnected):
             time.sleep(RETRY_DELAY)
             continue
         except Exception as e:
-            print(f"Encountered Unexpected Error : {e}")
+            KakaoTalk.SendDebugMessage(f"{e}",RECV_UUID)
+            print(f"Encountered Unexpected {type(e).__name__} : \n{e}")
             raise e
         
     print(f"Connection Failed After {MAX_RETRIES} tries")
     sys.exit(1)
+
+

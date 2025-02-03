@@ -26,6 +26,24 @@ def CheckLatest(new_title,file_path):
     
     return False
 
+def IndexPrevious(titles,file_path):
+    # 파일이 존재하지 않으면 그냥 가장 오래된
+    if not os.path.exists(file_path):
+        return None
+    
+    # 파일의 기존 첫 줄을 읽어옵니다.
+    with open(file_path, 'r', encoding='utf-8') as file:
+        previous_title = file.readline().strip()  # 첫 줄을 읽고 양쪽 공백을 제거합니다.
+        
+    # 이전 제목과 일치하는 항목의 인덱스 반환
+    try:
+        prev_idx = titles.index(previous_title)
+    except ValueError:
+        return None
+
+    return prev_idx
+
+
 def UpdateLatest(new_title,file_path):
     
     #new_title = unicodedata.normalize('NFC', new_title) #이걸 하면 메모장에서 자모 분리 문제가 해결되는 대신 CheckLatest에서도 똑같이 이걸 해줘야함.
