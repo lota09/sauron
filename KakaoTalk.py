@@ -116,7 +116,51 @@ def SendFriendMessage(components,receiver_uuids):
         return response.json()
     else:
         raise KakaoTalkError(f"메시지 전송 실패: {response.text}")
+    
 
+def SendDebugMessage(contents,receiver_uuids):
+    """
+    카카오톡 메시지를 보내는 함수. 필요시 ACCESS_TOKEN을 갱신.
+    """
+
+    # 1. Access Token 발급 또는 갱신
+    access_token = get_access_token()
+
+    # 2. 메시지 템플릿 구성
+    payload = \
+        {
+            "receiver_uuids": json.dumps(receiver_uuids),
+            "template_object": json.dumps(
+                {
+                    "object_type": "feed",
+                    "content": {
+                        "title": "",
+                        "description": contents,
+                        "link": {
+                            "web_url": "",
+                            "mobile_web_url": "",
+                        }
+                    },
+                    "item_content": { 
+                        "profile_text": "디버그 메시지",
+                        "profile_image_url": "https://cdn-icons-png.flaticon.com/512/9392/9392717.png",
+                    }
+                }
+            )
+        }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/x-www-form-urlencoded;charset=utf-8"
+    }
+
+    # 3. 메시지 전송 요청
+    response = requests.post(KAKAO_API_URL_FRIEND, headers=headers, data=payload)
+    
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise KakaoTalkError(f"메시지 전송 실패: {response.text}")
 
 # 테스트
 if __name__ == "__main__":
@@ -129,7 +173,8 @@ if __name__ == "__main__":
             'summary': '- 숭실대학교 차세대반도체학과에서 반도체 산업이해 오픈 특강을 진행함\n- 반도체 산업에서 패키지의 중요성에 대해 이해하는 시간이 되기를 바람'
         }
     #result=SendSelfMessage(components)
-    result=SendFriendMessage(components,receiver_uuids)
-    
+    #result=SendFriendMessage(components,receiver_uuids)
+    result=SendDebugMessage("1: 4줄까지 표시 가능 \n2: 16자 정도 표시 가능합니다. \n3: \n4: \n5: 안보임",receiver_uuids)
+
     print(result)
     

@@ -15,7 +15,6 @@ class FetchError(Exception):
     def __str__(self):
         return f"{self.__class__.__name__}: {self.message}"
       
-      
 class SummaryError(Exception):
     def __init__(self, message="Summary Failed. Reason Unknown."):
         self.message = message

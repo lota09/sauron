@@ -4,3 +4,4 @@ buffers/
 *.tar
 api_infos/
 .*/
+.*

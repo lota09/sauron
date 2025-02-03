@@ -37,17 +37,31 @@ def UpdateUsaint():
     MODEL_URL= "models/usaint-url.json"
     buffer_file= BUFFER_FILES['usaint']
     
-    new_title= FetchSimilar(MODEL_TITLE,USAINT_URL)[0]
+    titles= FetchSimilar(MODEL_TITLE,f"{USAINT_URL}1")
+
+    priv_idx = IndexPrevious(titles,buffer_file)
     
-    if CheckLatest(new_title,buffer_file) is False:
+    # 최신항목이 기존 항목과 같은경우
+    if (priv_idx == 0):
         return
+    # 버퍼 파일이나 기존 항목이 없는경우
+    elif (priv_idx is None):
+        idx = -1
+    # pivot < priv_idx 인 경우
+    elif (0 < priv_idx):
+        idx = priv_idx -1
+    # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
+    else :
+        raise IndexError(f"priv_idx Cannot Have Value of {priv_idx}.")
+
 
     overview={
         'dept': '유세인트',
-        'title': new_title,
-        'date': FetchSimilar(MODEL_DATE,USAINT_URL)[0],
+        'title': titles[idx],
+        #'date': FetchSimilar(MODEL_DATE,USAINT_URL)[idx],
         'level': '주요 공지사항',
-        'url': FetchSimilar(MODEL_URL,USAINT_URL)[0],
+        'url': FetchSimilar(MODEL_URL,USAINT_URL)[idx],
+        'latest': titles[0] == titles[idx]
     }
 
     return overview
@@ -59,17 +73,30 @@ def UpdateDisuBold():
     MODEL_URL= "models/disu-url-bold.json"
     buffer_file= BUFFER_FILES['disu_bold']
     
-    new_title= FetchSimilar(MODEL_TITLE,f"{DISU_URL}1")[0]
+    titles= FetchSimilar(MODEL_TITLE,f"{DISU_URL}1")
+
+    priv_idx = IndexPrevious(titles,buffer_file)
     
-    if CheckLatest(new_title,buffer_file) is False:
+    # 최신항목이 기존 항목과 같은경우
+    if (priv_idx == 0):
         return
+    # 버퍼 파일이나 기존 항목이 없는경우
+    elif (priv_idx is None):
+        idx = -1
+    # pivot < priv_idx 인 경우
+    elif (0 < priv_idx):
+        idx = priv_idx -1
+    # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
+    else :
+        raise IndexError(f"priv_idx Cannot Have Value of {priv_idx}.")
 
     overview={
         'dept': '차세대반도체학과',
-        'title': new_title,
-        'date': FetchSimilar(MODEL_DATE,f"{DISU_URL}1")[0],
+        'title': titles[idx],
+        #'date': FetchSimilar(MODEL_DATE,f"{DISU_URL}1")[idx],
         'level': '주요 공지사항',
-        'url': FetchSimilar(MODEL_URL,f"{DISU_URL}1")[0],
+        'url': FetchSimilar(MODEL_URL,f"{DISU_URL}1")[idx],
+        'latest': titles[0] == titles[idx]
     }
 
     return overview
@@ -81,17 +108,30 @@ def UpdateEcoBold():
     MODEL_URL= "models/eco-url.json"
     buffer_file= BUFFER_FILES['eco_bold']
     
-    new_title= FetchSimilar(MODEL_TITLE,f"{ECO_URL}1")[0]
-    
-    if CheckLatest(new_title,buffer_file) is False:
+    titles= FetchSimilar(MODEL_TITLE,f"{ECO_URL}1")
+
+    priv_idx = IndexPrevious(titles,buffer_file)
+
+    # 최신항목이 기존 항목과 같은경우
+    if (priv_idx == 0):
         return
+    # 버퍼 파일이나 기존 항목이 없는경우
+    elif (priv_idx is None):
+        idx = -1
+    # pivot < priv_idx 인 경우
+    elif (0 < priv_idx):
+        idx = priv_idx -1
+    # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
+    else :
+        raise IndexError(f"priv_idx Cannot Have Value of {priv_idx}.")
 
     overview={
         'dept': '경제학과',
-        'title': new_title,
-        'date': FetchSimilar(MODEL_DATE,f"{ECO_URL}1")[0],
+        'title': titles[idx],
+        #'date': FetchSimilar(MODEL_DATE,f"{ECO_URL}1")[idx],
         'level': '주요 공지사항',
-        'url': FetchSimilar(MODEL_URL,f"{ECO_URL}1")[0],
+        'url': FetchSimilar(MODEL_URL,f"{ECO_URL}1")[idx],
+        'latest': titles[0] == titles[idx]
     }
 
     return overview
@@ -106,7 +146,7 @@ def UpdateDisu():
     # 최대 5번까지 시도
     for page in range (1,MAX_PAGES+1):
         try:
-            new_title = FetchSimilar(MODEL_TITLE, f"{DISU_URL}{page}")[0]
+            titles = FetchSimilar(MODEL_TITLE, f"{DISU_URL}{page}")
             break
         except IndexError:
             continue
@@ -115,15 +155,28 @@ def UpdateDisu():
     else:
         raise FetchError("Fetch Failed After 5 Pages.")
     
-    if CheckLatest(new_title,buffer_file) is False:
+    priv_idx = IndexPrevious(titles,buffer_file)
+
+    # 최신항목이 기존 항목과 같은경우
+    if (priv_idx == 0):
         return
+    # 버퍼 파일이나 기존 항목이 없는경우
+    elif (priv_idx is None):
+        idx = -1
+    # pivot < priv_idx 인 경우
+    elif (0 < priv_idx):
+        idx = priv_idx -1
+    # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
+    else :
+        raise IndexError(f"priv_idx Cannot Have Value of {priv_idx}.")
         
     overview={
         'dept': '차세대반도체학과',
-        'title': new_title,
-        'date': FetchSimilar(MODEL_DATE, f"{DISU_URL}{page}")[0],
+        'title': titles[idx],
+        #'date': FetchSimilar(MODEL_DATE, f"{DISU_URL}{page}")[idx],
         'level': '일반 공지사항',
-        'url': FetchSimilar(MODEL_URL, f"{DISU_URL}{page}")[0],
+        'url': FetchSimilar(MODEL_URL, f"{DISU_URL}{page}")[idx],
+        'latest': titles[0] == titles[idx]
     }
     
     return overview
@@ -147,27 +200,36 @@ def UpdateEco():
     else:
         raise FetchError("Fetch Failed, Major Announcements are everywhere.")
         
-    new_title= titles_all[pivot]
-    
-    if CheckLatest(new_title,buffer_file) is False:
+    priv_idx = IndexPrevious(titles_all,buffer_file)
+
+    # 최신항목이 기존 항목과 같은경우
+    if (priv_idx == pivot):
         return
-        
+    # 버퍼 파일이나 기존 항목이 없는경우
+    elif (priv_idx is None):
+        idx = -1
+    # pivot < priv_idx 인 경우
+    elif (pivot < priv_idx):
+        idx = priv_idx -1
+    # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
+    else :
+        raise IndexError(f"priv_idx Cannot Have Value of {priv_idx}.")
+
+
     overview={
         'dept': '경제학과',
-        'title': new_title,
-        'date': FetchSimilar(MODEL_DATE,f"{ECO_URL}{page}")[pivot],
+        'title': titles_all[idx],
+        #'date': FetchSimilar(MODEL_DATE,f"{ECO_URL}{page}")[idx],
         'level': '일반 공지사항',
-        'url': FetchSimilar(MODEL_URL,f"{ECO_URL}{page}")[pivot],
+        'url': FetchSimilar(MODEL_URL,f"{ECO_URL}{page}")[idx],
+        'latest': titles_all[pivot] == titles_all[idx]
     }
     
     return overview
 
 
 
-
-
 if __name__ == '__main__':
-    result=UpdateUsaint()
+
+    result=FetchSimilar("models/disu-title.json", f"{DISU_URL}1")
     print(result)
-    if result:
-        UpdateLatest(result['title'],BUFFER_FILES['usaint'])
