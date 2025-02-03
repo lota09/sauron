@@ -1,7 +1,11 @@
-models/test.json
 __pycache__/
 buffers/
-*.tar
 api_infos/
+
 .*/
 .*
+
+*.bat
+*.tar
+
+models/test.json
