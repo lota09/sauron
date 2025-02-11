@@ -1,2 +1,6 @@
-.trashbin/
 models/test.json
+__pycache__/
+buffers/
+*.tar
+api_infos/
+.*/
