@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # JSON 파일 경로
-JSON_FILE="kakao-api-info.json"
+JSON_FILE="api_infos/kakao-api-info.json"
 
 # REST_API_KEY 가져오기
 REST_API_KEY=$(jq -r '.REST_API_KEY' "$JSON_FILE")
