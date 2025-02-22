@@ -151,7 +151,7 @@ def UpdateDisu():
         except IndexError:
             continue
         except Exception as e:
-            raise FetchError() from e
+            raise FetchError(e) from e
     else:
         raise FetchError("Fetch Failed After 5 Pages.")
     
