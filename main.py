@@ -12,7 +12,7 @@ import Content
 import ClovaSummary
 #import Notify
 import KakaoTalk
-from Errors import KakaoTalkError
+import Errors
 from Update import UpdateLatest
 from datetime import datetime
 
@@ -88,15 +88,17 @@ if __name__ == "__main__":
         try:
             main()
             sys.exit(0)
-        except KakaoTalkError as e:
-            print(f"Encountered Unexpected KakaoTalkError :\n{e}")
+        except Errors.KakaoTalkError as e:
+            debug_message = Errors.InfoCollect(e)
+            print(debug_message)
             raise e
         except (ConnectionError, RemoteDisconnected):
             time.sleep(RETRY_DELAY)
             continue
         except Exception as e:
-            KakaoTalk.SendDebugMessage(f"{e}",RECV_UUID)
-            print(f"Encountered Unexpected {type(e).__name__} : \n{e}")
+            debug_message = Errors.InfoCollect(e)
+            KakaoTalk.SendDebugMessage(debug_message,RECV_UUID)
+            print(debug_message)
             raise e
         
     print(f"Connection Failed After {MAX_RETRIES} tries")

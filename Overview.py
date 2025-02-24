@@ -9,7 +9,7 @@
 
 from autoscraper import AutoScraper
 from Update import *
-from Errors import *
+from Errors import FetchError
 
 MAX_PAGES = 5
 
@@ -37,7 +37,7 @@ def UpdateUsaint():
     MODEL_URL= "models/usaint-url.json"
     buffer_file= BUFFER_FILES['usaint']
     
-    titles= FetchSimilar(MODEL_TITLE,f"{USAINT_URL}1")
+    titles= FetchSimilar(MODEL_TITLE,f"{USAINT_URL}")
 
     priv_idx = IndexPrevious(titles,buffer_file)
     
@@ -232,4 +232,5 @@ def UpdateEco():
 if __name__ == '__main__':
 
     result=FetchSimilar("models/disu-title.json", f"{DISU_URL}1")
+    #result=FetchSimilar("models/usaint-title.json", f"{USAINT_URL}")
     print(result)
