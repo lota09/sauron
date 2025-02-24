@@ -9,7 +9,7 @@
 # -*- coding: utf-8 -*-
 import requests
 from bs4 import BeautifulSoup
-from Errors import *
+from Errors import FetchError
 
 
 def FetchUsaint(url):

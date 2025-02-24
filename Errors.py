@@ -7,6 +7,27 @@
 *******************************************************************'''
 
 # -*- coding: utf-8 -*-
+
+def InfoCollect(e):
+    import traceback
+    import os
+
+    tb = traceback.extract_tb(e.__traceback__)  # 스택 트레이스 추출
+    last_trace = tb[-1]  # 가장 마지막 예외 발생 위치
+
+    # 파일 경로에서 모듈(파일) 이름만 추출
+    module_name = os.path.basename(last_trace.filename)  
+    line_number = last_trace.lineno  
+    function_name = last_trace.name
+
+    debug_message = (
+        f"📜 Module: {module_name}, line {line_number}\n"
+        f"🔧 Function: {function_name}\n"
+        f"❌ Exception: {type(e).__name__} - {e}"
+    )
+    return debug_message
+
+
 class FetchError(Exception):
     def __init__(self, message="Fetch Failed. Reason Unknown."):
         self.message = message
