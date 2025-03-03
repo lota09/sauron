@@ -118,7 +118,7 @@ def UpdateEcoBold():
     # 버퍼 파일이나 기존 항목이 없는경우
     elif (priv_idx is None):
         idx = -1
-    # pivot < priv_idx 인 경우
+    # 새로운 항목이 생긴경우 (pivot < priv_idx 인 경우)
     elif (0 < priv_idx):
         idx = priv_idx -1
     # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
@@ -147,9 +147,9 @@ def UpdateDisu():
     for page in range (1,MAX_PAGES+1):
         try:
             titles = FetchSimilar(MODEL_TITLE, f"{DISU_URL}{page}")
+            if not titles:
+                continue
             break
-        except IndexError:
-            continue
         except Exception as e:
             raise FetchError(e) from e
     else:
