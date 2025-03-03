@@ -31,17 +31,17 @@ TIMESTAMP_FILE = "buffers/update_timestamp.txt"
 def main():
     func_overview=[
         Overview.UpdateUsaint,
-        Overview.UpdateDisu,
+        #Overview.UpdateDisu,
         Overview.UpdateDisuBold,
-        Overview.UpdateEco,
+        #Overview.UpdateEco,
         Overview.UpdateEcoBold
     ]
 
     func_content=[
         Content.FetchUsaint,
+        #Content.FetchDisu,
         Content.FetchDisu,
-        Content.FetchDisu,
-        Content.FetchEco,
+        #Content.FetchEco,
         Content.FetchEco,
     ]
     
