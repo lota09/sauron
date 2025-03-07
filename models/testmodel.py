@@ -20,7 +20,7 @@ def FetchSimilar(model,url):
     return scraper.get_result_similar(url)
 
 
-result = FetchSimilar("models/test.json",url['usaint'])
+result = FetchSimilar("models/test.json",url['disu'])
 length=len(result)
 
 print(result)

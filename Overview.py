@@ -9,7 +9,7 @@
 
 from autoscraper import AutoScraper
 from Update import *
-from Errors import *
+from Errors import FetchError
 
 MAX_PAGES = 5
 
@@ -37,7 +37,7 @@ def UpdateUsaint():
     MODEL_URL= "models/usaint-url.json"
     buffer_file= BUFFER_FILES['usaint']
     
-    titles= FetchSimilar(MODEL_TITLE,f"{USAINT_URL}1")
+    titles= FetchSimilar(MODEL_TITLE,f"{USAINT_URL}")
 
     priv_idx = IndexPrevious(titles,buffer_file)
     
@@ -118,7 +118,7 @@ def UpdateEcoBold():
     # 버퍼 파일이나 기존 항목이 없는경우
     elif (priv_idx is None):
         idx = -1
-    # pivot < priv_idx 인 경우
+    # 새로운 항목이 생긴경우 (pivot < priv_idx 인 경우)
     elif (0 < priv_idx):
         idx = priv_idx -1
     # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
@@ -147,11 +147,11 @@ def UpdateDisu():
     for page in range (1,MAX_PAGES+1):
         try:
             titles = FetchSimilar(MODEL_TITLE, f"{DISU_URL}{page}")
+            if not titles:
+                continue
             break
-        except IndexError:
-            continue
         except Exception as e:
-            raise FetchError() from e
+            raise FetchError(e) from e
     else:
         raise FetchError("Fetch Failed After 5 Pages.")
     
@@ -232,4 +232,5 @@ def UpdateEco():
 if __name__ == '__main__':
 
     result=FetchSimilar("models/disu-title.json", f"{DISU_URL}1")
+    #result=FetchSimilar("models/usaint-title.json", f"{USAINT_URL}")
     print(result)
