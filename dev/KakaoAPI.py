@@ -104,10 +104,9 @@ def Logout():
 # 테스트
 if __name__ == "__main__":
     try:
-        #result = GetFriends(10, 0)
-        result = Whoami()
+        print(Whoami())
+        print(GetFriends(10, 0))
 
-        print(result)
     except KakaoTalkError as e:
         print(e)
     except Exception as e:
