@@ -18,9 +18,9 @@ ECO_URL='https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page='
 DISU_URL = 'https://www.disu.ac.kr/community/notice?cidx=42&page='
 BUFFER_FILES={
     "usaint": "buffers/usaint-update.txt",
-    "disu": "buffers/disu-update.txt",
+    #"disu": "buffers/disu-update.txt",
     "disu_bold": "buffers/disu-update-bold.txt",
-    "eco": "buffers/eco-update.txt",
+    #"eco": "buffers/eco-update.txt",
     "eco_bold": "buffers/eco-update-bold.txt"
 }
 
