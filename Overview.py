@@ -32,10 +32,11 @@ def FetchSimilar(model,url):
 
 
 def UpdateUsaint():
+    DEPT_ID= "usaint"
     MODEL_TITLE= "models/usaint-title.json"
     MODEL_DATE= "models/usaint-date.json"
     MODEL_URL= "models/usaint-url.json"
-    buffer_file= BUFFER_FILES['usaint']
+    buffer_file= BUFFER_FILES[DEPT_ID]
     
     titles= FetchSimilar(MODEL_TITLE,f"{USAINT_URL}")
 
@@ -57,6 +58,7 @@ def UpdateUsaint():
 
     overview={
         'dept': '유세인트',
+        'dept_id':DEPT_ID,
         'title': titles[idx],
         #'date': FetchSimilar(MODEL_DATE,USAINT_URL)[idx],
         'level': '주요 공지사항',
@@ -68,10 +70,11 @@ def UpdateUsaint():
 
 
 def UpdateDisuBold():
+    DEPT_ID= "disu_bold"
     MODEL_TITLE= "models/disu-title-bold.json"
     MODEL_DATE= "models/disu-date-bold.json"
     MODEL_URL= "models/disu-url-bold.json"
-    buffer_file= BUFFER_FILES['disu_bold']
+    buffer_file= BUFFER_FILES[DEPT_ID]
     
     titles= FetchSimilar(MODEL_TITLE,f"{DISU_URL}1")
 
@@ -92,6 +95,7 @@ def UpdateDisuBold():
 
     overview={
         'dept': '차세대반도체학과',
+        'dept_id':DEPT_ID,
         'title': titles[idx],
         #'date': FetchSimilar(MODEL_DATE,f"{DISU_URL}1")[idx],
         'level': '주요 공지사항',
@@ -103,10 +107,11 @@ def UpdateDisuBold():
 
 
 def UpdateEcoBold():
+    DEPT_ID= "eco_bold"
     MODEL_TITLE= "models/eco-title-bold.json"
     MODEL_DATE= "models/eco-date.json"
     MODEL_URL= "models/eco-url.json"
-    buffer_file= BUFFER_FILES['eco_bold']
+    buffer_file= BUFFER_FILES[DEPT_ID]
     
     titles= FetchSimilar(MODEL_TITLE,f"{ECO_URL}1")
 
@@ -127,6 +132,7 @@ def UpdateEcoBold():
 
     overview={
         'dept': '경제학과',
+        'dept_id':DEPT_ID,
         'title': titles[idx],
         #'date': FetchSimilar(MODEL_DATE,f"{ECO_URL}1")[idx],
         'level': '주요 공지사항',
@@ -138,10 +144,11 @@ def UpdateEcoBold():
 
 
 def UpdateDisu():
+    DEPT_ID= "disu"
     MODEL_TITLE="models/disu-title.json"
     MODEL_DATE="models/disu-date.json"
     MODEL_URL="models/disu-url.json"
-    buffer_file=BUFFER_FILES['disu']
+    buffer_file=BUFFER_FILES[DEPT_ID]
 
     # 최대 5번까지 시도
     for page in range (1,MAX_PAGES+1):
@@ -172,6 +179,7 @@ def UpdateDisu():
         
     overview={
         'dept': '차세대반도체학과',
+        'dept_id':DEPT_ID,
         'title': titles[idx],
         #'date': FetchSimilar(MODEL_DATE, f"{DISU_URL}{page}")[idx],
         'level': '일반 공지사항',
@@ -183,11 +191,12 @@ def UpdateDisu():
 
 
 def UpdateEco():
+    DEPT_ID= "eco"
     MODEL_TITLE_ALL= "models/eco-title.json"
     MODEL_TITLE_BOLD= "models/eco-title-bold.json"
     MODEL_DATE= "models/eco-date.json"
     MODEL_URL= "models/eco-url.json"
-    buffer_file=BUFFER_FILES['eco']
+    buffer_file=BUFFER_FILES[DEPT_ID]
 
     # 일반 공지사항 위치 찾기 - 최대 5번까지 시도
     for page in range (1,MAX_PAGES+1):
@@ -218,6 +227,7 @@ def UpdateEco():
 
     overview={
         'dept': '경제학과',
+        'dept_id':DEPT_ID,
         'title': titles_all[idx],
         #'date': FetchSimilar(MODEL_DATE,f"{ECO_URL}{page}")[idx],
         'level': '일반 공지사항',

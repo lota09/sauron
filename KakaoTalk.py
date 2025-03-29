@@ -118,7 +118,7 @@ def SendFriendMessage(components,receiver_uuids):
         raise KakaoTalkError(f"메시지 전송 실패: {response.text}")
     
 
-def SendDebugMessage(contents,receiver_uuids):
+def SendDebugMessage(content,receiver_uuids):
     """
     카카오톡 메시지를 보내는 함수. 필요시 ACCESS_TOKEN을 갱신.
     """
@@ -135,7 +135,7 @@ def SendDebugMessage(contents,receiver_uuids):
                     "object_type": "feed",
                     "content": {
                         "title": "",
-                        "description": contents,
+                        "description": content,
                         "link": {
                             "web_url": "",
                             "mobile_web_url": "",
@@ -174,7 +174,7 @@ if __name__ == "__main__":
         }
     #result=SendSelfMessage(components)
     #result=SendFriendMessage(components,receiver_uuids)
-    result=SendDebugMessage("1: 4줄까지 표시 가능 \n2: 16자 정도 표시 가능합니다. \n3: \n4: \n5: 안보임",receiver_uuids)
+    result=SendDebugMessage("1: 4줄까지 표시 가능 \n2: 16자 정도 표시 가능합니다. \n3: \n12345678901234567890 \n5: 안보임",receiver_uuids)
 
     print(result)
     

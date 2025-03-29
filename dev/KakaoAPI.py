@@ -19,6 +19,7 @@ from Errors import KakaoTalkError
 # 카카오 URL
 KAKAO_API_URL_WHOAMI = "https://kapi.kakao.com/v2/user/me"
 KAKAO_API_URL_GETFRIENDS = "https://kapi.kakao.com/v1/api/talk/friends"
+KAKAO_API_URL_VIEWSCOPES = "https://kapi.kakao.com/v2/user/scopes"
 KAKAO_API_URL_LOGOUT = "https://kauth.kakao.com/oauth/logout"
 
 
@@ -76,7 +77,37 @@ def GetFriends(limit, page):
     else:
         raise KakaoTalkError(f"친구목록 요청실패 : {response.text}")
     
+def ViewScopes():
+    """
+    동의한 항목을 보는 함수.
+    """
+    # 1. Access Token 발급 또는 갱신
+    access_token = get_access_token()
+
+    # 2. 요청 파라미터 구성
+    payload = {
+    #    "scopes" : ["friends","talk_message"]
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+
+    # 3. 친구 목록 요청
+    response = requests.get(KAKAO_API_URL_VIEWSCOPES, headers=headers, params=payload)
     
+    if response.status_code == 200:
+        data = response.json()
+        print(data)
+        #data : {'elements': [], 'total_count': 0, 'after_url': None, 'favorite_count': 0}
+        if 'scopes' in data:
+            return data['scopes']
+        else:
+            raise KakaoTalkError("응답에 동의항목이 없습니다.")
+    else:
+        raise KakaoTalkError(f"동의항목 요청실패 : {response.text}")
+
+
 def Logout():
     """
     카카오톡 친구 목록을 얻는 함수. 필요시 ACCESS_TOKEN을 갱신.
@@ -106,6 +137,7 @@ if __name__ == "__main__":
     try:
         print(Whoami())
         print(GetFriends(10, 0))
+        #print(ViewScopes())
 
     except KakaoTalkError as e:
         print(e)
