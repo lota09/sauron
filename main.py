@@ -12,6 +12,7 @@ import Content
 import ClovaSummary
 #import Notify
 import KakaoTalk
+import DiscordMsg
 import Errors
 from Update import UpdateLatest
 from datetime import datetime
@@ -45,7 +46,7 @@ def main():
         Content.FetchEco,
     ]
     
-    buffer_files=list(Overview.BUFFER_FILES.values())
+    buffer_files=list(Overview.BUFFER_FILES.values()) #딕셔너리 그대로 가져오기 예정 #buffer_files = Overview.BUFFER_FILES
 
     for func_idx, func in enumerate(func_overview):
 
@@ -65,6 +66,7 @@ def main():
             
             #최신 공지 전달
             #Notify.Email(components)
+            DiscordMsg.SendEmbedMessage(components)
             KakaoTalk.SendFriendMessage(components,RECV_UUID)
             
             #최신 공지 갱신
@@ -88,20 +90,23 @@ if __name__ == "__main__":
         try:
             main()
             sys.exit(0)
+        #카카오톡 에러 발생시 디스코드는 문제 없을 가능성이 큼
         except Errors.KakaoTalkError as e:
             debug_message = Errors.InfoCollect(e)
+            DiscordMsg.SendDebugMessage(debug_message)
             print(debug_message)
             raise e
+        #연결 오류 발생시 재시도
         except (ConnectionError, RemoteDisconnected):
             time.sleep(RETRY_DELAY)
             continue
+        #디스코드 에러 포함 여러 문제 발생시 카카오톡 알림
         except Exception as e:
             debug_message = Errors.InfoCollect(e)
             KakaoTalk.SendDebugMessage(debug_message,RECV_UUID)
+            DiscordMsg.SendDebugMessage(debug_message)
             print(debug_message)
             raise e
         
     print(f"Connection Failed After {MAX_RETRIES} tries")
     sys.exit(1)
-
-

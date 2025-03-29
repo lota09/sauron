@@ -12,7 +12,7 @@ import json
 import os
 from Errors import SummaryError
 
-API_INFO_FILE = 'api_infos/clovastudio-api-info.json'
+API_INFO_FILE = 'secrets/clovastudio-api-info.json'
 
 class CompletionExecutor:
     def __init__(self, host, api_key, api_key_primary_val, request_id, url_key):
@@ -48,7 +48,7 @@ class CompletionExecutor:
             #return 'Error'
 
 
-def load_api_info(file_path):
+def LoadSecrets(file_path):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Configuration file not found: {file_path}")
 
@@ -68,7 +68,7 @@ def load_api_info(file_path):
 def Summarize(content):
     """Summarize the given content using Clova Studio API."""
     # Load API keys and configuration
-    api_info = load_api_info(API_INFO_FILE)
+    api_info = LoadSecrets(API_INFO_FILE)
 
     # Create an instance of CompletionExecutor
     completion_executor = CompletionExecutor(

@@ -51,3 +51,11 @@ class KakaoTalkError(Exception):
 
     def __str__(self):
         return f"{self.__class__.__name__}: {self.message}"
+    
+class DiscordError(Exception):
+    def __init__(self, message="디스코드 메시지 전송 실패. 이유 : 알 수 없음."):
+        self.message = message
+        super().__init__(self.message)
+
+    def __str__(self):
+        return f"{self.__class__.__name__}: {self.message}"

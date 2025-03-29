@@ -11,7 +11,7 @@ import requests
 from Errors import KakaoTalkError
 
 # kakao-api-info.json 파일 경로
-API_INFO_PATH = 'api_infos/kakao-api-info.json'
+API_INFO_PATH = 'secrets/kakao-api-info.json'
 
 # 카카오 URL
 TOKEN_URL = "https://kauth.kakao.com/oauth/token"
