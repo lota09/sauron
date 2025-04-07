@@ -24,12 +24,15 @@ URLS={
     "disu_bold": 'https://www.disu.ac.kr/community/notice?cidx=42&page=1',
     "eco_bold": 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1',
     "disu": 'https://www.disu.ac.kr/community/notice?cidx=42&page=',
-    "eco": 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page='
+    "eco": 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=',
+    "cse_bold": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice',
+    "cse": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice&page='
 }
 DEPT_KO={
     "usaint": "유세인트",
     "disu_bold": "차세대반도체학과",
-    "eco_bold": "경제학과"
+    "eco_bold": "경제학과",
+    "cse_bold": "컴퓨터공학과"
 }
 
 scraper = AutoScraper()
@@ -41,15 +44,16 @@ def FetchSimilar(model,url):
 
 def isDemoted(dept_id):
     DEMOTION_FUNC={
-        "disu_bold": FetchDisu,
-        "eco_bold": FetchEco
+        "disu_bold": FetchNotbold,
+        "eco_bold": FetchAll,
+        "cse_bold":FetchAll
     }
 
     #Demotion 개념이 없는 부서일 경우
     if DEMOTION_FUNC.get(dept_id,None) is None: 
         return False
     
-    titles = DEMOTION_FUNC[dept_id]()
+    titles = DEMOTION_FUNC[dept_id](dept_id)
     #종료된 공지사항에서 기록된 마지막 공지를 찾음
     return Update.IndexPrevious(titles,dept_id) is not None
 
@@ -109,14 +113,16 @@ def UpdateFetch(dept_id):
 
     return overview
 
+# bold - notbold 두가지 형태로 구분할수 있는경우
+def FetchNotbold(dept_id):
 
-def FetchDisu():
-    DEPT_ID = "disu"
+    #disu_bold 에서 앞부분 disu만 가져옴
+    dept_id_normal = dept_id.split('_')[0]
 
     # 최대 5번까지 시도
     for page in range (1,MAX_PAGES+1):
         try:
-            titles = FetchSimilar(f"models/title-{DEPT_ID}.json", f"{URLS[DEPT_ID]}{page}")
+            titles = FetchSimilar(f"models/title-{dept_id_normal}.json", f"{URLS[dept_id_normal]}{page}")
             if not titles:
                 continue
             break
@@ -127,14 +133,16 @@ def FetchDisu():
     
     return titles
 
+# ("even" 처럼) 같은 이름이 포함된 HTML속성때문에 bold - all 두가지 모델만 있는경우
+def FetchAll(dept_id):
 
-def FetchEco():
-    DEPT_ID = "eco"
+    #disu_bold 에서 앞부분 disu만 가져옴
+    dept_id_all = dept_id.split('_')[0]
 
     # 일반 공지사항 위치 찾기 - 최대 5번까지 시도
     for page in range (1,MAX_PAGES+1):
-        titles_all=FetchSimilar(f"models/title-{DEPT_ID}.json",f"{URLS[DEPT_ID]}{page}")
-        titles_bold=FetchSimilar(f"models/title-{DEPT_ID}_bold.json",f"{URLS[DEPT_ID]}{page}")
+        titles_all=FetchSimilar(f"models/title-{dept_id_all}.json",f"{URLS[dept_id_all]}{page}")
+        titles_bold=FetchSimilar(f"models/title-{dept_id_all}_bold.json",f"{URLS[dept_id_all]}{page}")
         
         if len(titles_all)>len(titles_bold):
             break

@@ -1,0 +1,121 @@
+{
+    "stack_list": [
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "section",
+                    {
+                        "class": [
+                            "notice_wrap",
+                            "cont_wrap"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "container"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "notice_list"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "table",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "tbody",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    1
+                ],
+                [
+                    "tr",
+                    {
+                        "class": [
+                            "bo_notice"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "td",
+                    {
+                        "class": [
+                            "td_subject"
+                        ],
+                        "style": "padding-left:0px"
+                    }
+                ]
+            ],
+            "wanted_attr": null,
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "3bcf0b004e2136907e79dff900cfd3ea2134abdfddacd118a455018ad37d6ae6",
+            "stack_id": "rule_pycg",
+            "alias": ""
+        }
+    ]
+}
