@@ -17,7 +17,6 @@ def Email(components):
     dept= components['dept']
     title= components['title']
     date= components['date']
-    level= components['level']
     url= components['url']
     summary= components['summary']
     
@@ -30,7 +29,7 @@ Subject: [{dept}]{title}
 
 <html>
     <body>
-        <h2>{dept} {level}</h2>
+        <h2>{dept}</h2>
         {date}
         <hr>
         {summary.replace("\n", "<br>")}

@@ -11,6 +11,18 @@ import requests
 from bs4 import BeautifulSoup
 from Errors import FetchError
 
+def FetchContent(dept_id,url):
+    CONTENT_FUNC={
+        "usaint": FetchUsaint,
+        "disu_bold": FetchDisu,
+        "eco_bold": FetchEco
+    }
+    #내용 Fetch 메서드가 없는경우
+    if CONTENT_FUNC.get(dept_id,None) is None:
+        return
+    
+    return CONTENT_FUNC[dept_id] (url)
+
 
 def FetchUsaint(url):
     # 1. URL에서 HTML 가져오기

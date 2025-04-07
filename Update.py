@@ -8,25 +8,14 @@
 # -*- coding: utf-8 -*-
 
 import os
-#import unicodedata
+import unicodedata
 
-def CheckLatest(new_title,file_path):
+def IndexPrevious(titles,dept_id = None,file_path = None):
     
-    # 파일이 존재하지 않으면 입력된 제목이 최신
-    if not os.path.exists(file_path):
-        return True
-    
-    # 파일의 기존 첫 줄을 읽어옵니다.
-    with open(file_path, 'r', encoding='utf-8') as file:
-        previous_title = file.readline().strip()  # 첫 줄을 읽고 양쪽 공백을 제거합니다.
-        
-    # 비교하여 다르면 입력된 제목이 최신
-    if previous_title != new_title:
-        return True
-    
-    return False
+    #dept_id 지정시 버퍼파일 지정
+    if dept_id:
+        file_path = f"buffers/last-{dept_id}.txt"
 
-def IndexPrevious(titles,file_path):
     # 파일이 존재하지 않으면 그냥 가장 오래된
     if not os.path.exists(file_path):
         return None
@@ -34,6 +23,8 @@ def IndexPrevious(titles,file_path):
     # 파일의 기존 첫 줄을 읽어옵니다.
     with open(file_path, 'r', encoding='utf-8') as file:
         previous_title = file.readline().strip()  # 첫 줄을 읽고 양쪽 공백을 제거합니다.
+        #titles와 비교를 위해 NFD 정규화
+        previous_title = unicodedata.normalize('NFD', previous_title)
         
     # 이전 제목과 일치하는 항목의 인덱스 반환
     try:
@@ -44,9 +35,14 @@ def IndexPrevious(titles,file_path):
     return prev_idx
 
 
-def UpdateLatest(new_title,file_path):
-    
-    #new_title = unicodedata.normalize('NFC', new_title) #이걸 하면 메모장에서 자모 분리 문제가 해결되는 대신 CheckLatest에서도 똑같이 이걸 해줘야함.
+def UpdateLatest(new_title,dept_id = None,file_path = None):
+    #dept_id 지정시 버퍼파일 지정
+    if dept_id:
+        file_path = f"buffers/last-{dept_id}.txt"
+
+    #NFC 정규화 (자모 분리 방지)
+    new_title = unicodedata.normalize('NFC', new_title)
+
     #부모 디렉터리 없으면 생성
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     
