@@ -1,4 +1,4 @@
-python ./FetchEco.py
-python ./FetchUsaint.py
-python ./FetchDisu.py
-python ./FetchDisuBold.py
+#!/bin/bash
+
+source .venv/bin/activate
+python main.py

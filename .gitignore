@@ -1,2 +1,11 @@
-.trashbin/
+__pycache__/
+buffers/
+secrets
+
+.*/
+.*
+
+*.bat
+*.tar
+
 models/test.json
