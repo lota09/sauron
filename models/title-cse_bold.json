@@ -21,29 +21,15 @@
                 [
                     "body",
                     {
-                        "class": [
-                            "stretched"
-                        ],
+                        "class": "",
                         "style": ""
                     },
-                    0
+                    1
                 ],
                 [
                     "div",
                     {
-                        "class": [
-                            "clearfix"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "space-wrapper"
-                        ],
+                        "class": "",
                         "style": ""
                     },
                     0
@@ -51,16 +37,9 @@
                 [
                     "section",
                     {
-                        "class": "",
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
                         "class": [
-                            "content-wrap"
+                            "notice_wrap",
+                            "cont_wrap"
                         ],
                         "style": ""
                     },
@@ -70,28 +49,7 @@
                     "div",
                     {
                         "class": [
-                            "container",
-                            "clearfix"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "row"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "col-12"
+                            "container"
                         ],
                         "style": ""
                     },
@@ -109,7 +67,7 @@
                     "div",
                     {
                         "class": [
-                            "board"
+                            "notice_list"
                         ],
                         "style": ""
                     },
@@ -118,15 +76,7 @@
                 [
                     "table",
                     {
-                        "class": [
-                            "fixwidth",
-                            "table",
-                            "table-rows",
-                            "thcenter",
-                            "noborder",
-                            "va-m",
-                            "disu"
-                        ],
+                        "class": "",
                         "style": ""
                     },
                     0
@@ -137,25 +87,25 @@
                         "class": "",
                         "style": ""
                     },
-                    0
+                    1
                 ],
                 [
                     "tr",
                     {
-                        "class": "",
+                        "class": [
+                            "bo_notice"
+                        ],
                         "style": ""
                     },
-                    2
+                    0
                 ],
                 [
                     "td",
                     {
                         "class": [
-                            "text-center",
-                            "hidden-xs-down",
-                            "FS12"
+                            "td_subject"
                         ],
-                        "style": ""
+                        "style": "padding-left:0px"
                     }
                 ]
             ],
@@ -163,6 +113,8 @@
             "is_full_url": null,
             "is_non_rec_text": null,
             "url": "",
+            "hash": "3bcf0b004e2136907e79dff900cfd3ea2134abdfddacd118a455018ad37d6ae6",
+            "stack_id": "rule_pycg",
             "alias": ""
         }
     ]

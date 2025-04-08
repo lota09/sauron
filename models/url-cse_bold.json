@@ -21,29 +21,15 @@
                 [
                     "body",
                     {
-                        "class": [
-                            "stretched"
-                        ],
+                        "class": "",
                         "style": ""
                     },
-                    0
+                    1
                 ],
                 [
                     "div",
                     {
-                        "class": [
-                            "clearfix"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "space-wrapper"
-                        ],
+                        "class": "",
                         "style": ""
                     },
                     0
@@ -51,16 +37,9 @@
                 [
                     "section",
                     {
-                        "class": "",
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
                         "class": [
-                            "content-wrap"
+                            "notice_wrap",
+                            "cont_wrap"
                         ],
                         "style": ""
                     },
@@ -70,28 +49,7 @@
                     "div",
                     {
                         "class": [
-                            "container",
-                            "clearfix"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "row"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "col-12"
+                            "container"
                         ],
                         "style": ""
                     },
@@ -109,7 +67,7 @@
                     "div",
                     {
                         "class": [
-                            "board"
+                            "notice_list"
                         ],
                         "style": ""
                     },
@@ -118,15 +76,7 @@
                 [
                     "table",
                     {
-                        "class": [
-                            "fixwidth",
-                            "table",
-                            "table-rows",
-                            "thcenter",
-                            "noborder",
-                            "va-m",
-                            "disu"
-                        ],
+                        "class": "",
                         "style": ""
                     },
                     0
@@ -137,34 +87,52 @@
                         "class": "",
                         "style": ""
                     },
-                    0
+                    3
                 ],
                 [
                     "tr",
                     {
                         "class": [
-                            "noti"
+                            "bo_notice"
                         ],
                         "style": ""
                     },
-                    2
+                    0
                 ],
                 [
                     "td",
                     {
                         "class": [
-                            "text-center",
-                            "hidden-xs-down",
-                            "FS12"
+                            "td_subject"
                         ],
+                        "style": "padding-left:0px"
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "bo_tit"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "a",
+                    {
+                        "class": "",
                         "style": ""
                     }
                 ]
             ],
-            "wanted_attr": null,
+            "wanted_attr": "href",
             "is_full_url": null,
             "is_non_rec_text": null,
             "url": "",
+            "hash": "68351d1bd0b865d161b859915700ef389477c62d9a549dd1c82f1b555845ae9f",
+            "stack_id": "rule_ef9i",
             "alias": ""
         }
     ]

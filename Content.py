@@ -11,34 +11,19 @@ import requests
 from bs4 import BeautifulSoup
 from Errors import FetchError
 
+def FetchContent(dept_id,url):
+    DIV_ARGS={
+        "usaint": {'class_':'bg-white p-4 mb-5'},
+        "disu_bold": {'class_':'bbs_contents'},
+        "eco_bold": {'id':'bo_v_con'},
+        "cse_bold": {'id':'bo_v_con'}
+    }
 
-def FetchUsaint(url):
-    # 1. URL에서 HTML 가져오기
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise FetchError(f"Failed to fetch the page. Status code: {response.status_code}")
-
-    # 2. HTML 파싱
-    soup = BeautifulSoup(response.text, 'html.parser')
-
-    # 3. 대상 div 탐색
-    container = soup.find('div', class_='bg-white p-4 mb-5')
-    if not container:
-        raise FetchError("본문 내용이 포함된 컨테이너를 찾을 수 없습니다.")
-
-    # 4. 제목 추출
-    #title = container.find('h2').get_text(strip=True)
-
-    # 5. 본문 내용 추출
-    paragraphs = container.find_all('p')
-    content = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-
-    # 6. 결과 반환
-    return content
-
-
-def FetchEco(url):
-    # 1. URL에서 HTML 가져오기
+    #Html div 키워드가 지정되지 않은경우
+    if DIV_ARGS.get(dept_id,None) is None:
+        return
+    
+    # 1. HTML 요청
     response = requests.get(url)
     if response.status_code != 200:
         raise FetchError(f"페이지를 불러오는 데 실패했습니다. 상태 코드: {response.status_code}")
@@ -46,38 +31,17 @@ def FetchEco(url):
     # 2. HTML 파싱
     soup = BeautifulSoup(response.text, 'html.parser')
     
-    # 3. 제목 추출
-    #title_section = soup.find('h2', id='bo_v_title')
-    #title = title_section.find('span', class_='bo_v_tit').get_text(strip=True)
+    # 3. 본문 추출
+    content_div = soup.find('div', **DIV_ARGS[dept_id])
+    if not content_div:
+        raise FetchError("본문을 찾을 수 없습니다.")
     
-    # 4. 본문 내용 추출
-    content_div = soup.find('div', id='bo_v_con')
-    paragraphs = content_div.find_all('p')
-    content = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+    # 4. 모든 텍스트를 평탄하게 추출
+    content = "\n".join(content_div.stripped_strings)
 
-    # 5. 결과 반환
+    # 5. 반환
     return content
 
-
-def FetchDisu(url):
-    # 1. URL에서 HTML 가져오기
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise FetchError(f"페이지를 불러오는 데 실패했습니다. 상태 코드: {response.status_code}")
-    
-    # 2. HTML 파싱
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    # 2. 제목 추출
-    #title = soup.find('h1', class_='bbstitle').get_text(strip=True)
-    
-    # 4. 본문 내용 추출
-    content_div = soup.find('div', class_='bbs_contents')
-    content_lines = content_div.find_all(text=True, recursive=True)
-    content = "\n".join(line.strip() for line in content_lines if line.strip())
-
-    # 5. 결과 반환
-    return content
 
 '''
 # Example usage:

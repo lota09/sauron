@@ -10,6 +10,8 @@ CHANNEL_ID={
     "usaint": "1355604572353069200",
     "disu_bold": "1355609212016918608",
     "eco_bold": "1355609054629593289",
+    "cse_bold": "1358816727256793318",
+
     "debug" : "1355610759777882162"
 }
 
@@ -56,7 +58,7 @@ def SendDebugMessage(content):
 
     embed = {
         "title": f"⚠️ 디버그 메시지",
-        "description": f"\u200b\n{content}\n\n@here",
+        "description": f"\u200b\n{content}\n\n@everyone",
         "color": 0xe74c3c,  # 빨간색
         "footer": {"text": "사우론의 눈"},
         "timestamp": datetime.now(timezone.utc).isoformat()
@@ -89,13 +91,15 @@ def SendEmbedMessage(components):
     title= components['title']
     url= components['url']
     summary= components['summary']
+    if summary.strip():
+        summary = f"\u200b\n{summary}\n\u200b"
 
     embed = {
         "title": f"📢 {title}",
-        "description": f"\u200b\n{summary}\n\u200b",
+        "description": summary,
         "color": 0x62c6c4,  # 파란색
         "fields": [
-            {"name": "🔗 링크", "value": f"[▶자세히 보기]({url})\n\u200b\n@here", "inline": True},
+            {"name": "🔗 링크", "value": f"[▶자세히 보기]({url})\n\u200b\n@everyone", "inline": True},
         ],
         "footer": {"text": dept},
         "timestamp": datetime.now(timezone.utc).isoformat()
@@ -126,7 +130,7 @@ if __name__ == "__main__":
             'dept': '차세대반도체학과',
             'dept_id': 'disu_bold',
             'title': '차세대반도체학과 반도체 세미나 I Advanced Package 이해 I 2024. 11. 20. (수) I 반도체산업이해(특강)',
-            'date': '2024-11-18', 'level': '일반 공지사항', 'url': 'https://www.disu.ac.kr/community/notice?md=v&bbsidx=7978',
+            'date': '2024-11-18', 'url': 'https://www.disu.ac.kr/community/notice?md=v&bbsidx=7978',
             'summary': '- 숭실대학교 차세대반도체학과에서 반도체 산업이해 오픈 특강을 진행함\n- 반도체 산업에서 패키지의 중요성에 대해 이해하는 시간이 되기를 바람'
         }
 
@@ -135,7 +139,7 @@ if __name__ == "__main__":
 📜 Module: main.py, line 77
 🔧 Function: main
 ❌ Exception: IndexError - Announcement Still Outdated After 5 Fetchs. 
-Outdated Data :{'dept': '경제학과', 'title': '경제학과 성적 우수 백마 장학생 모집', 'level': '주요 공지사항', 'url': 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&wr_id=46&page=1', 'latest': False, 'summary': ''}
+Outdated Data :{'dept': '경제학과', 'title': '경제학과 성적 우수 백마 장학생 모집', 'url': 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&wr_id=46&page=1', 'latest': False, 'summary': ''}
 """
     SendContentMessage("인간 세계의 끝이 도래했다.")
     SendDebugMessage(content)
