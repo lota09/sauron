@@ -17,12 +17,13 @@ url={'usaint':'https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&
     'custom':''
     }
 
-wanted_list = ["https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice&wr_id=4789"]
+wanted_list = ["[스파르탄SW교육원] 제23회 TOPCIT 정기평가/설명회"]
 
-result = scraper.build(url['custom'], wanted_list,update=False,text_fuzz_ratio=1)
+result = scraper.build(url['cse'], wanted_list,update=False,text_fuzz_ratio=1)
 length=len(result)
 
-print(result)
-print(length)
+print(f"[{length}개 항목]")
+for i,item in enumerate(result):
+    print(f"{i} : {item}")
 
 scraper.save('models/test.json')
