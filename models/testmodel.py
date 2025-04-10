@@ -22,7 +22,7 @@ def FetchSimilar(model,url):
     return scraper.get_result_similar(url)
 
 
-result = FetchSimilar("models/test.json",url['custom'])
+result = FetchSimilar("models/test.json",url['cse'])
 length=len(result)
 
 print(f"[{length}개 항목]")

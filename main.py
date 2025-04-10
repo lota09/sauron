@@ -9,7 +9,7 @@
 
 import Overview
 #import Notify
-import KakaoTalk
+#import KakaoTalk
 import DiscordMsg
 import Errors
 import Update
@@ -24,7 +24,7 @@ from http.client import RemoteDisconnected
 
 MAX_RETRIES = 5  # 최대 재시도 횟수
 RETRY_DELAY = 5  # 재시도 간격 (초)
-RECV_UUID=["jL-Iu4K3hbeEqJqomaiZr5iulrqLuoy-jrqD7A"] #카카오톡 수신자 UUID 목록
+#RECV_UUID=["jL-Iu4K3hbeEqJqomaiZr5iulrqLuoy-jrqD7A"] #카카오톡 수신자 UUID 목록
 TIMESTAMP_FILE = "buffers/update_timestamp.txt"
 
 DEPT_IDS = Overview.DEPT_KO.keys()
@@ -42,7 +42,7 @@ def main():
             #최신 공지 전달
             #Notify.Email(components)
             DiscordMsg.SendEmbedMessage(components)
-            KakaoTalk.SendFriendMessage(components,RECV_UUID)
+            #KakaoTalk.SendFriendMessage(components,RECV_UUID)
             
             #최신 공지 갱신
             Update.UpdateLatest(components['title'],dept_id)
@@ -79,7 +79,7 @@ if __name__ == "__main__":
         #디스코드 에러 포함 여러 문제 발생시 카카오톡 알림
         except Exception as e:
             debug_message = Errors.InfoCollect(e)
-            KakaoTalk.SendDebugMessage(debug_message,RECV_UUID)
+            #KakaoTalk.SendDebugMessage(debug_message,RECV_UUID)
             DiscordMsg.SendDebugMessage(debug_message)
             print(debug_message)
             raise e
