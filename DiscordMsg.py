@@ -1,3 +1,12 @@
+'''*******************************************************************
+  - Project          : The Eye Of Sauron
+  - File name        : DiscordMsg.py
+  - Description      : Transfer Notice to send Discord msg
+  - Owner            : Seokmin.Kang
+  - Revision history :  1) 2025.04.x  : Initial release
+                        2) 2025.04.12 : Updated footer Icon display feature
+*******************************************************************'''
+
 import requests
 import json
 import os
