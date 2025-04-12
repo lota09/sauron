@@ -11,9 +11,16 @@ CHANNEL_ID={
     "disu_bold": "1355609212016918608",
     "eco_bold": "1355609054629593289",
     "cse_bold": "1358816727256793318",
+    "aix_nonbin": "1360537451981967390",
 
     "debug" : "1355610759777882162"
 }
+ICONS={
+    "usaint" : "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg",
+
+    "debug" : "https://cdn.discordapp.com/attachments/1355611235156234473/1360547635672649869/c7dca22d3f65a53a.png?ex=67fb843a&is=67fa32ba&hm=f33da564c49964ab9ef2ce280a651dc9f968926d70be675db62f4fd8af4332fb&"
+}
+
 
 def LoadSecrets(file_path):
     if not os.path.exists(file_path):
@@ -60,7 +67,10 @@ def SendDebugMessage(content):
         "title": f"⚠️ 디버그 메시지",
         "description": f"\u200b\n{content}\n\n@everyone",
         "color": 0xe74c3c,  # 빨간색
-        "footer": {"text": "사우론의 눈"},
+        "footer": {
+            "text": "사우론의 눈" ,
+            "icon_url": ICONS["debug"]
+        },
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
@@ -91,6 +101,7 @@ def SendEmbedMessage(components):
     title= components['title']
     url= components['url']
     summary= components['summary']
+    icon_url = ICONS.get(dept_id,ICONS["usaint"])
     if summary.strip():
         summary = f"\u200b\n{summary}\n\u200b"
 
@@ -101,7 +112,10 @@ def SendEmbedMessage(components):
         "fields": [
             {"name": "🔗 링크", "value": f"[▶자세히 보기]({url})\n\u200b\n@everyone", "inline": True},
         ],
-        "footer": {"text": dept},
+        "footer": {
+            "text": dept ,
+            "icon_url": icon_url
+        },
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
@@ -136,11 +150,11 @@ if __name__ == "__main__":
 
     content = \
 """
-📜 Module: main.py, line 77
-🔧 Function: main
-❌ Exception: IndexError - Announcement Still Outdated After 5 Fetchs. 
+📜 Module: DiscordMsg.py, line 159
+🔧 Function: SendDebugMessage
+❌ Exception: ExampleError - Testing Debug Message itself
 Outdated Data :{'dept': '경제학과', 'title': '경제학과 성적 우수 백마 장학생 모집', 'url': 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&wr_id=46&page=1', 'latest': False, 'summary': ''}
 """
     SendContentMessage("인간 세계의 끝이 도래했다.")
     SendDebugMessage(content)
-    SendEmbedMessage(components)
+    #SendEmbedMessage(components)

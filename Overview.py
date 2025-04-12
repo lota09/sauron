@@ -26,13 +26,15 @@ URLS={
     "disu": 'https://www.disu.ac.kr/community/notice?cidx=42&page=',
     "eco": 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=',
     "cse_bold": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice',
-    "cse": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice&page='
+    "cse": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice&page=',
+    "aix_nonbin": 'https://aix.ssu.ac.kr/notice.html?&page=1'
 }
 DEPT_KO={
     "usaint": "유세인트",
     "disu_bold": "차세대반도체학과",
     "eco_bold": "경제학과",
-    "cse_bold": "컴퓨터공학과"
+    "cse_bold": "컴퓨터학부",
+    "aix_nonbin": "AI융합학부"
 }
 
 scraper = AutoScraper()
@@ -76,6 +78,11 @@ def MakePointer(last_idx,pivot=0):
 
 
 def UpdateFetch(dept_id):
+    PIVOT={
+        "aix_nonbin":len(FetchAixbold(dept_id))
+    }
+    pivot = PIVOT.get(dept_id,0)
+
     model_title= f"models/title-{dept_id}.json"
     model_url= f"models/url-{dept_id}.json"
     url = URLS[dept_id]
@@ -83,7 +90,7 @@ def UpdateFetch(dept_id):
     titles= FetchSimilar(model_title,url)
     last_idx = Update.IndexPrevious(titles,dept_id)
 
-    new_idx = MakePointer(last_idx)
+    new_idx = MakePointer(last_idx,pivot)
     #마지막 공지가 최신공지인 경우
     if new_idx is None:
         return
@@ -101,7 +108,7 @@ def UpdateFetch(dept_id):
         'title': unicodedata.normalize('NFC', titles[new_idx]),
         'url': content_url,
         'summary' : '',
-        'latest': titles[0] == titles[new_idx]
+        'latest': titles[pivot] == titles[new_idx]
     }
 
     #공지 내용 가져오기
@@ -154,8 +161,17 @@ def FetchAll(dept_id):
 
     return titles
 
+# 속성 이름에 의한 구분이 어려운경우
+def FetchAixbold(dept_id):
+
+    titles_all=FetchSimilar(f"models/title-{dept_id}.json",f"{URLS[dept_id]}")
+    titles_normalized = [unicodedata.normalize('NFC', title) for title in titles_all]
+    filtered = [item for item in titles_normalized if '[공지]' in item]
+
+    return filtered
+
 
 if __name__ == '__main__':
     #result = UpdateFetch("disu_bold",summary=False)
-    result = UpdateFetch("eco_bold")
+    result = UpdateFetch("aix_nonbin")
     print(result)

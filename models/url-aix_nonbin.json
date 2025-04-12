@@ -1,0 +1,154 @@
+{
+    "stack_list": [
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "section",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "container"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "form",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "content_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "sub_notice"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "notice_con"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "table-responsive"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "table",
+                    {
+                        "class": [
+                            "table"
+                        ],
+                        "style": ""
+                    },
+                    1
+                ],
+                [
+                    "tr",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "td",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "a",
+                    {
+                        "class": "",
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": true,
+            "is_non_rec_text": null,
+            "url": "https://aix.ssu.ac.kr/notice.html",
+            "hash": "a30e5b13c9f7fda5bb5b4659646788b807189cdbf4d67074b8d56bd1f326395e",
+            "stack_id": "rule_x76o",
+            "alias": ""
+        }
+    ]
+}
