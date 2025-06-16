@@ -21,6 +21,7 @@ CHANNEL_ID={
     "eco_bold": "1355609054629593289",
     "cse_bold": "1358816727256793318",
     "aix_nonbin": "1360537451981967390",
+    "disu_polaris": "1355609212016918608",
 
     "debug" : "1355610759777882162"
 }
@@ -166,4 +167,4 @@ Outdated Data :{'dept': '경제학과', 'title': '경제학과 성적 우수 백
 """
     SendContentMessage("인간 세계의 끝이 도래했다.")
     SendDebugMessage(content)
-    #SendEmbedMessage(components)
+    SendEmbedMessage(components)

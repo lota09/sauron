@@ -15,7 +15,8 @@ DIV_ARGS={
     "disu_bold": {'class_':'bbs_contents'},
     "eco_bold": {'id':'bo_v_con'},
     "cse_bold": {'id':'bo_v_con'},
-    "aix_nonbin":{"class":"table-responsive"}
+    "aix_nonbin":{"class":"table-responsive"},
+    "disu_polaris": {'class_':'bbs_contents'}
 }
 
 def FetchContent(dept_id,url):

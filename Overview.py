@@ -12,7 +12,7 @@ from autoscraper import AutoScraper
 import Update
 import Content
 import ClovaSummary
-from Errors import FetchError
+from Errors import FetchError, SummaryError
 
 MAX_PAGES = 5
 SUMMARY_EN = True
@@ -27,14 +27,17 @@ URLS={
     "eco": 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=',
     "cse_bold": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice',
     "cse": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice&page=',
-    "aix_nonbin": 'https://aix.ssu.ac.kr/notice.html?&page=1'
+    "aix_nonbin": 'https://aix.ssu.ac.kr/notice.html?&page=1',
+    "disu_polaris" : "https://www.disu.ac.kr/community/notice?cidx=38&page="
+
 }
 DEPT_KO={
     "usaint": "유세인트",
     "disu_bold": "차세대반도체학과",
     "eco_bold": "경제학과",
     "cse_bold": "컴퓨터학부",
-    "aix_nonbin": "AI융합학부"
+    "aix_nonbin": "AI융합학부",
+    "disu_polaris": "차세대반도체학과 POLARIS",
 }
 
 scraper = AutoScraper()
@@ -116,7 +119,10 @@ def UpdateFetch(dept_id):
     
     #클로바 요약
     if (SUMMARY_EN and content):
-        overview['summary']= ClovaSummary.Summarize(f"제목:{overview['title']}\n내용:\n{content}")
+        try:
+            overview['summary']= ClovaSummary.Summarize(f"제목:{overview['title']}\n내용:\n{content}")
+        except SummaryError as e:
+            overview['summary']= "요약을 실패하였습니다"
 
     return overview
 

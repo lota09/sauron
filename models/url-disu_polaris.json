@@ -1,0 +1,178 @@
+{
+    "stack_list": [
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "class": [
+                            "stretched"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "clearfix"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "space-wrapper"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "section",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "content-wrap"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "container",
+                            "clearfix"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "row"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "col-12"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "board"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "table",
+                    {
+                        "class": [
+                            "fixwidth",
+                            "table",
+                            "table-rows",
+                            "thcenter",
+                            "noborder",
+                            "va-m",
+                            "disu"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "tbody",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "tr",
+                    {
+                        "class": [
+                            "noti"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "td",
+                    {
+                        "class": [
+                            "title",
+                            "noti-tit"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "a",
+                    {
+                        "style": "",
+                        "class": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": true,
+            "is_non_rec_text": null,
+            "url": "https://www.disu.ac.kr/community/notice?cidx=42&page=1",
+            "alias": ""
+        }
+    ]
+}
