@@ -8,6 +8,7 @@
 # -*- coding: utf-8 -*-
 
 import Overview
+from DeptInfo import DEPTS
 #import Notify
 #import KakaoTalk
 import DiscordMsg
@@ -24,19 +25,21 @@ from http.client import RemoteDisconnected
 
 MAX_RETRIES = 5  # 최대 재시도 횟수
 RETRY_DELAY = 5  # 재시도 간격 (초)
-#RECV_UUID=["jL-Iu4K3hbeEqJqomaiZr5iulrqLuoy-jrqD7A"] #카카오톡 수신자 UUID 목록
 TIMESTAMP_FILE = "buffers/update_timestamp.txt"
 
-DEPT_IDS = Overview.DEPT_KO.keys()
+CURRENT_DEPT = None
 
 def main():
+    global CURRENT_DEPT
 
-    for dept_id in DEPT_IDS:
+    for dept in DEPTS:
+
+        CURRENT_DEPT = dept.dept_id
 
         for i in range(MAX_RETRIES):
             
             #공지 정보 가져오기, 최신 공지 비교
-            if (components := Overview.UpdateFetch(dept_id)) is None:
+            if (components := Overview.UpdateFetch(dept)) is None:
                 break
 
             #최신 공지 전달
@@ -45,7 +48,7 @@ def main():
             #KakaoTalk.SendFriendMessage(components,RECV_UUID)
             
             #최신 공지 갱신
-            Update.UpdateLatest(components['title'],dept_id)
+            Update.UpdateLatest(components['title'],dept.dept_id)
 
             #가장 최신항목이면 다음 dept
             if (components['latest']):
@@ -68,7 +71,7 @@ if __name__ == "__main__":
             sys.exit(0)
         #카카오톡 에러 발생시 디스코드는 문제 없을 가능성이 큼
         except Errors.KakaoTalkError as e:
-            debug_message = Errors.InfoCollect(e)
+            debug_message = Errors.InfoCollect(e,CURRENT_DEPT)
             DiscordMsg.SendDebugMessage(debug_message)
             print(debug_message)
             raise e
@@ -78,7 +81,7 @@ if __name__ == "__main__":
             continue
         #디스코드 에러 포함 여러 문제 발생시 카카오톡 알림
         except Exception as e:
-            debug_message = Errors.InfoCollect(e)
+            debug_message = Errors.InfoCollect(e,CURRENT_DEPT)
             #KakaoTalk.SendDebugMessage(debug_message,RECV_UUID)
             DiscordMsg.SendDebugMessage(debug_message)
             print(debug_message)

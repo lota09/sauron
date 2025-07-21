@@ -10,23 +10,15 @@
 import requests
 from bs4 import BeautifulSoup
 from Errors import FetchError
-DIV_ARGS={
-    "usaint": {'class_':'bg-white p-4 mb-5'},
-    "disu_bold": {'class_':'bbs_contents'},
-    "eco_bold": {'id':'bo_v_con'},
-    "cse_bold": {'id':'bo_v_con'},
-    "aix_nonbin":{"class":"table-responsive"},
-    "disu_polaris": {'class_':'bbs_contents'}
-}
 
-def FetchContent(dept_id,url):
+def FetchContent(div_args,content_url):
 
     #Html div 키워드가 지정되지 않은경우
-    if DIV_ARGS.get(dept_id,None) is None:
+    if div_args is None:
         return
     
     # 1. HTML 요청
-    response = requests.get(url)
+    response = requests.get(content_url)
     if response.status_code != 200:
         raise FetchError(f"페이지를 불러오는 데 실패했습니다. 상태 코드: {response.status_code}")
     
@@ -34,7 +26,7 @@ def FetchContent(dept_id,url):
     soup = BeautifulSoup(response.text, 'html.parser')
     
     # 3. 본문 추출
-    content_div = soup.find('div', **DIV_ARGS[dept_id])
+    content_div = soup.find('div', **div_args)
     if not content_div:
         raise FetchError("본문을 찾을 수 없습니다.")
     

@@ -7,23 +7,16 @@
 *******************************************************************'''
 
 from autoscraper import AutoScraper
+import DeptInfo
 
 scraper = AutoScraper()
-
-url={'usaint':'https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&keyword',   \
-    'eco':'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1', \
-    'disu':'https://www.disu.ac.kr/community/notice?cidx=42&page=1',  \
-    'cse':'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice', \
-    'aix':'https://aix.ssu.ac.kr/notice.html',\
-    'custom':''
-    }
 
 def FetchSimilar(model,url):
     scraper.load(model)
     return scraper.get_result_similar(url,contain_sibling_leaves=False)
 
 
-result = FetchSimilar("models/test.json",url['aix'])
+result = FetchSimilar("models/test.json",DeptInfo.usaint.url)
 length=len(result)
 
 print(f"[{length}개 항목]")

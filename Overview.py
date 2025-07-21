@@ -15,30 +15,14 @@ import ClovaSummary
 from Errors import FetchError, SummaryError
 
 MAX_PAGES = 5
-SUMMARY_EN = True
+
+try:
+    import Hyperparms
+    SUMMARY_EN = Hyperparms.SUMMARY_EN
+except:
+    SUMMARY_EN = True
 
 #모델, 버퍼파일 이름 재설정
-
-URLS={
-    "usaint": 'https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&keyword',
-    "disu_bold": 'https://www.disu.ac.kr/community/notice?cidx=42&page=1',
-    "eco_bold": 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1',
-    "disu": 'https://www.disu.ac.kr/community/notice?cidx=42&page=',
-    "eco": 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=',
-    "cse_bold": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice',
-    "cse": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice&page=',
-    "aix_nonbin": 'https://aix.ssu.ac.kr/notice.html?&page=1',
-    "disu_polaris" : "https://www.disu.ac.kr/community/notice?cidx=38&page="
-
-}
-DEPT_KO={
-    "usaint": "유세인트",
-    "disu_bold": "차세대반도체학과",
-    "eco_bold": "경제학과",
-    "cse_bold": "컴퓨터학부",
-    "aix_nonbin": "AI융합학부",
-    "disu_polaris": "차세대반도체학과 POLARIS",
-}
 
 scraper = AutoScraper()
 
@@ -47,18 +31,20 @@ def FetchSimilar(model,url):
     return scraper.get_result_similar(url)
 
 
-def isDemoted(dept_id):
-    DEMOTION_FUNC={
-        "disu_bold": FetchNotbold,
-        "eco_bold": FetchAll,
-        "cse_bold":FetchAll
-    }
+def isDemoted(dept):
+    dept_id = dept.dept_id
+
+    # BOLD 구분 유형에 따른 Demotion 함수 결정
+    if "binary" in dept.misc:
+        demotion_func = FetchNotbold
+    elif "even" in dept.misc:
+        demotion_func = FetchAll
 
     #Demotion 개념이 없는 부서일 경우
-    if DEMOTION_FUNC.get(dept_id,None) is None: 
+    else:
         return False
-    
-    titles = DEMOTION_FUNC[dept_id](dept_id)
+
+    titles = demotion_func(dept)
     #종료된 공지사항에서 기록된 마지막 공지를 찾음
     return Update.IndexPrevious(titles,dept_id) is not None
 
@@ -80,15 +66,17 @@ def MakePointer(last_idx,pivot=0):
     return new_idx
 
 
-def UpdateFetch(dept_id):
-    PIVOT={
-        "aix_nonbin":len(FetchAixbold(dept_id))
-    }
-    pivot = PIVOT.get(dept_id,0)
+def UpdateFetch(dept):
+    dept_id = dept.dept_id
+    url = dept.url
+
+    if "nonbin" in dept.misc:
+        pivot = len(FetchAixbold(dept))
+    else:
+        pivot = 0
 
     model_title= f"models/title-{dept_id}.json"
     model_url= f"models/url-{dept_id}.json"
-    url = URLS[dept_id]
     
     titles= FetchSimilar(model_title,url)
     last_idx = Update.IndexPrevious(titles,dept_id)
@@ -99,15 +87,14 @@ def UpdateFetch(dept_id):
         return
     
     #마지막 공지사항이 종료된 공지사항이면 갱신함
-    if isDemoted(dept_id):
+    if isDemoted(dept):
         Update.UpdateLatest(titles[new_idx],dept_id)
         return
 
     content_url = FetchSimilar(model_url,url)[new_idx]
 
     overview={
-        'dept': DEPT_KO[dept_id],
-        'dept_id':dept_id,
+        'dept': dept,
         'title': unicodedata.normalize('NFC', titles[new_idx]),
         'url': content_url,
         'summary' : '',
@@ -115,7 +102,7 @@ def UpdateFetch(dept_id):
     }
 
     #공지 내용 가져오기
-    content = Content.FetchContent(dept_id,content_url)
+    content = Content.FetchContent(dept.div_args,content_url)
     
     #클로바 요약
     if (SUMMARY_EN and content):
@@ -127,15 +114,18 @@ def UpdateFetch(dept_id):
     return overview
 
 # bold - notbold 두가지 형태로 구분할수 있는경우
-def FetchNotbold(dept_id):
+def FetchNotbold(dept):
 
-    #disu_bold 에서 앞부분 disu만 가져옴
+    url = dept.url[:-1]
+    dept_id = dept.dept_id
+
+    # 예를들어, disu_bold 에서 앞부분 disu만 가져옴
     dept_id_normal = dept_id.split('_')[0]
 
     # 최대 5번까지 시도
     for page in range (1,MAX_PAGES+1):
         try:
-            titles = FetchSimilar(f"models/title-{dept_id_normal}.json", f"{URLS[dept_id_normal]}{page}")
+            titles = FetchSimilar(f"models/title-{dept_id_normal}.json", f"{url}{page}")
             if not titles:
                 continue
             break
@@ -147,15 +137,18 @@ def FetchNotbold(dept_id):
     return titles
 
 # ("even" 처럼) 같은 이름이 포함된 HTML속성때문에 bold - all 두가지 모델만 있는경우
-def FetchAll(dept_id):
+def FetchAll(dept):
 
-    #disu_bold 에서 앞부분 disu만 가져옴
+    url = dept.url[:-1]
+    dept_id = dept.dept_id
+
+    # 예를들어, disu_bold 에서 앞부분 disu만 가져옴
     dept_id_all = dept_id.split('_')[0]
 
     # 일반 공지사항 위치 찾기 - 최대 5번까지 시도
     for page in range (1,MAX_PAGES+1):
-        titles_all=FetchSimilar(f"models/title-{dept_id_all}.json",f"{URLS[dept_id_all]}{page}")
-        titles_bold=FetchSimilar(f"models/title-{dept_id_all}_bold.json",f"{URLS[dept_id_all]}{page}")
+        titles_all=FetchSimilar(f"models/title-{dept_id_all}.json",f"{url}{page}")
+        titles_bold=FetchSimilar(f"models/title-{dept_id_all}_bold.json",f"{url}{page}")
         
         if len(titles_all)>len(titles_bold):
             break
@@ -168,9 +161,9 @@ def FetchAll(dept_id):
     return titles
 
 # 속성 이름에 의한 구분이 어려운경우
-def FetchAixbold(dept_id):
+def FetchAixbold(dept):
 
-    titles_all=FetchSimilar(f"models/title-{dept_id}.json",f"{URLS[dept_id]}")
+    titles_all=FetchSimilar(f"models/title-{dept.dept_id}.json",dept.url)
     titles_normalized = [unicodedata.normalize('NFC', title) for title in titles_all]
     filtered = [item for item in titles_normalized if '[공지]' in item]
 
