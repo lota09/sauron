@@ -125,7 +125,7 @@ startup = \
     dept_info("startup",
               "숭실대학교 창업지원단",
               "https://startup.ssu.ac.kr/board/notice?boardEnName=notice&pageNum=1",
-              "",
+              "1397154831579484273",
               ICON_URL_SSU,
               etc={"css_sel":"[class^='Notice_title__'] a",
                    "url_prefix":"https://startup.ssu.ac.kr"})
