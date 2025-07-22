@@ -1,0 +1,154 @@
+{
+    "stack_list": [
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "section",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "container"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "form",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "content_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "sub_notice"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "notice_con"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "table-responsive"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "table",
+                    {
+                        "class": [
+                            "table"
+                        ],
+                        "style": ""
+                    },
+                    1
+                ],
+                [
+                    "tr",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "td",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "a",
+                    {
+                        "class": "",
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": null,
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "274c69af2eb5d36767039ca7ea8af8f181fab14be26b50f09666824d14dcd0ab",
+            "stack_id": "rule_0lge",
+            "alias": ""
+        }
+    ]
+}

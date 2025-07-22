@@ -7,21 +7,34 @@
 *******************************************************************'''
 # -*- coding: utf-8 -*-
 
+import unicodedata
 from autoscraper import AutoScraper
-from Update import *
+import Update
+import Content
+import ClovaSummary
 from Errors import FetchError
 
 MAX_PAGES = 5
+SUMMARY_EN = True
 
-USAINT_URL='https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&keyword'
-ECO_URL='https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page='
-DISU_URL = 'https://www.disu.ac.kr/community/notice?cidx=42&page='
-BUFFER_FILES={
-    "usaint": "buffers/usaint-update.txt",
-    #"disu": "buffers/disu-update.txt",
-    "disu_bold": "buffers/disu-update-bold.txt",
-    #"eco": "buffers/eco-update.txt",
-    "eco_bold": "buffers/eco-update-bold.txt"
+#모델, 버퍼파일 이름 재설정
+
+URLS={
+    "usaint": 'https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&keyword',
+    "disu_bold": 'https://www.disu.ac.kr/community/notice?cidx=42&page=1',
+    "eco_bold": 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1',
+    "disu": 'https://www.disu.ac.kr/community/notice?cidx=42&page=',
+    "eco": 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=',
+    "cse_bold": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice',
+    "cse": 'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice&page=',
+    "aix_nonbin": 'https://aix.ssu.ac.kr/notice.html?&page=1'
+}
+DEPT_KO={
+    "usaint": "유세인트",
+    "disu_bold": "차세대반도체학과",
+    "eco_bold": "경제학과",
+    "cse_bold": "컴퓨터학부",
+    "aix_nonbin": "AI융합학부"
 }
 
 scraper = AutoScraper()
@@ -31,129 +44,92 @@ def FetchSimilar(model,url):
     return scraper.get_result_similar(url)
 
 
-def UpdateUsaint():
-    DEPT_ID= "usaint"
-    MODEL_TITLE= "models/usaint-title.json"
-    MODEL_DATE= "models/usaint-date.json"
-    MODEL_URL= "models/usaint-url.json"
-    buffer_file= BUFFER_FILES[DEPT_ID]
-    
-    titles= FetchSimilar(MODEL_TITLE,f"{USAINT_URL}")
+def isDemoted(dept_id):
+    DEMOTION_FUNC={
+        "disu_bold": FetchNotbold,
+        "eco_bold": FetchAll,
+        "cse_bold":FetchAll
+    }
 
-    priv_idx = IndexPrevious(titles,buffer_file)
+    #Demotion 개념이 없는 부서일 경우
+    if DEMOTION_FUNC.get(dept_id,None) is None: 
+        return False
     
+    titles = DEMOTION_FUNC[dept_id](dept_id)
+    #종료된 공지사항에서 기록된 마지막 공지를 찾음
+    return Update.IndexPrevious(titles,dept_id) is not None
+
+
+def MakePointer(last_idx,pivot=0):
     # 최신항목이 기존 항목과 같은경우
-    if (priv_idx == 0):
+    if (last_idx == pivot):
         return
     # 버퍼 파일이나 기존 항목이 없는경우
-    elif (priv_idx is None):
-        idx = -1
-    # pivot < priv_idx 인 경우
-    elif (0 < priv_idx):
-        idx = priv_idx -1
-    # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
+    elif (last_idx is None):
+        new_idx = pivot
+    # pivot < last_idx 인 경우
+    elif (pivot < last_idx):
+        new_idx = last_idx -1
+    # 발생할 수 없는 시나리오 (pivot > last_idx 인 경우)
     else :
-        raise IndexError(f"priv_idx Cannot Have Value of {priv_idx}.")
+        raise IndexError(f"last_idx Cannot Have Value of {last_idx}.")
+    
+    return new_idx
 
+
+def UpdateFetch(dept_id):
+    PIVOT={
+        "aix_nonbin":len(FetchAixbold(dept_id))
+    }
+    pivot = PIVOT.get(dept_id,0)
+
+    model_title= f"models/title-{dept_id}.json"
+    model_url= f"models/url-{dept_id}.json"
+    url = URLS[dept_id]
+    
+    titles= FetchSimilar(model_title,url)
+    last_idx = Update.IndexPrevious(titles,dept_id)
+
+    new_idx = MakePointer(last_idx,pivot)
+    #마지막 공지가 최신공지인 경우
+    if new_idx is None:
+        return
+    
+    #마지막 공지사항이 종료된 공지사항이면 갱신함
+    if isDemoted(dept_id):
+        Update.UpdateLatest(titles[new_idx],dept_id)
+        return
+
+    content_url = FetchSimilar(model_url,url)[new_idx]
 
     overview={
-        'dept': '유세인트',
-        'dept_id':DEPT_ID,
-        'title': titles[idx],
-        #'date': FetchSimilar(MODEL_DATE,USAINT_URL)[idx],
-        'level': '주요 공지사항',
-        'url': FetchSimilar(MODEL_URL,USAINT_URL)[idx],
-        'latest': titles[0] == titles[idx]
+        'dept': DEPT_KO[dept_id],
+        'dept_id':dept_id,
+        'title': unicodedata.normalize('NFC', titles[new_idx]),
+        'url': content_url,
+        'summary' : '',
+        'latest': titles[pivot] == titles[new_idx]
     }
+
+    #공지 내용 가져오기
+    content = Content.FetchContent(dept_id,content_url)
+    
+    #클로바 요약
+    if (SUMMARY_EN and content):
+        overview['summary']= ClovaSummary.Summarize(f"제목:{overview['title']}\n내용:\n{content}")
 
     return overview
 
+# bold - notbold 두가지 형태로 구분할수 있는경우
+def FetchNotbold(dept_id):
 
-def UpdateDisuBold():
-    DEPT_ID= "disu_bold"
-    MODEL_TITLE= "models/disu-title-bold.json"
-    MODEL_DATE= "models/disu-date-bold.json"
-    MODEL_URL= "models/disu-url-bold.json"
-    buffer_file= BUFFER_FILES[DEPT_ID]
-    
-    titles= FetchSimilar(MODEL_TITLE,f"{DISU_URL}1")
-
-    priv_idx = IndexPrevious(titles,buffer_file)
-    
-    # 최신항목이 기존 항목과 같은경우
-    if (priv_idx == 0):
-        return
-    # 버퍼 파일이나 기존 항목이 없는경우
-    elif (priv_idx is None):
-        idx = -1
-    # pivot < priv_idx 인 경우
-    elif (0 < priv_idx):
-        idx = priv_idx -1
-    # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
-    else :
-        raise IndexError(f"priv_idx Cannot Have Value of {priv_idx}.")
-
-    overview={
-        'dept': '차세대반도체학과',
-        'dept_id':DEPT_ID,
-        'title': titles[idx],
-        #'date': FetchSimilar(MODEL_DATE,f"{DISU_URL}1")[idx],
-        'level': '주요 공지사항',
-        'url': FetchSimilar(MODEL_URL,f"{DISU_URL}1")[idx],
-        'latest': titles[0] == titles[idx]
-    }
-
-    return overview
-
-
-def UpdateEcoBold():
-    DEPT_ID= "eco_bold"
-    MODEL_TITLE= "models/eco-title-bold.json"
-    MODEL_DATE= "models/eco-date.json"
-    MODEL_URL= "models/eco-url.json"
-    buffer_file= BUFFER_FILES[DEPT_ID]
-    
-    titles= FetchSimilar(MODEL_TITLE,f"{ECO_URL}1")
-
-    priv_idx = IndexPrevious(titles,buffer_file)
-
-    # 최신항목이 기존 항목과 같은경우
-    if (priv_idx == 0):
-        return
-    # 버퍼 파일이나 기존 항목이 없는경우
-    elif (priv_idx is None):
-        idx = -1
-    # 새로운 항목이 생긴경우 (pivot < priv_idx 인 경우)
-    elif (0 < priv_idx):
-        idx = priv_idx -1
-    # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
-    else :
-        raise IndexError(f"priv_idx Cannot Have Value of {priv_idx}.")
-
-    overview={
-        'dept': '경제학과',
-        'dept_id':DEPT_ID,
-        'title': titles[idx],
-        #'date': FetchSimilar(MODEL_DATE,f"{ECO_URL}1")[idx],
-        'level': '주요 공지사항',
-        'url': FetchSimilar(MODEL_URL,f"{ECO_URL}1")[idx],
-        'latest': titles[0] == titles[idx]
-    }
-
-    return overview
-
-
-def UpdateDisu():
-    DEPT_ID= "disu"
-    MODEL_TITLE="models/disu-title.json"
-    MODEL_DATE="models/disu-date.json"
-    MODEL_URL="models/disu-url.json"
-    buffer_file=BUFFER_FILES[DEPT_ID]
+    #disu_bold 에서 앞부분 disu만 가져옴
+    dept_id_normal = dept_id.split('_')[0]
 
     # 최대 5번까지 시도
     for page in range (1,MAX_PAGES+1):
         try:
-            titles = FetchSimilar(MODEL_TITLE, f"{DISU_URL}{page}")
+            titles = FetchSimilar(f"models/title-{dept_id_normal}.json", f"{URLS[dept_id_normal]}{page}")
             if not titles:
                 continue
             break
@@ -162,85 +138,40 @@ def UpdateDisu():
     else:
         raise FetchError("Fetch Failed After 5 Pages.")
     
-    priv_idx = IndexPrevious(titles,buffer_file)
+    return titles
 
-    # 최신항목이 기존 항목과 같은경우
-    if (priv_idx == 0):
-        return
-    # 버퍼 파일이나 기존 항목이 없는경우
-    elif (priv_idx is None):
-        idx = -1
-    # pivot < priv_idx 인 경우
-    elif (0 < priv_idx):
-        idx = priv_idx -1
-    # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
-    else :
-        raise IndexError(f"priv_idx Cannot Have Value of {priv_idx}.")
-        
-    overview={
-        'dept': '차세대반도체학과',
-        'dept_id':DEPT_ID,
-        'title': titles[idx],
-        #'date': FetchSimilar(MODEL_DATE, f"{DISU_URL}{page}")[idx],
-        'level': '일반 공지사항',
-        'url': FetchSimilar(MODEL_URL, f"{DISU_URL}{page}")[idx],
-        'latest': titles[0] == titles[idx]
-    }
-    
-    return overview
+# ("even" 처럼) 같은 이름이 포함된 HTML속성때문에 bold - all 두가지 모델만 있는경우
+def FetchAll(dept_id):
 
-
-def UpdateEco():
-    DEPT_ID= "eco"
-    MODEL_TITLE_ALL= "models/eco-title.json"
-    MODEL_TITLE_BOLD= "models/eco-title-bold.json"
-    MODEL_DATE= "models/eco-date.json"
-    MODEL_URL= "models/eco-url.json"
-    buffer_file=BUFFER_FILES[DEPT_ID]
+    #disu_bold 에서 앞부분 disu만 가져옴
+    dept_id_all = dept_id.split('_')[0]
 
     # 일반 공지사항 위치 찾기 - 최대 5번까지 시도
     for page in range (1,MAX_PAGES+1):
-        titles_all=FetchSimilar(MODEL_TITLE_ALL,f"{ECO_URL}{page}")
-        titles_bold=FetchSimilar(MODEL_TITLE_BOLD,f"{ECO_URL}{page}")
+        titles_all=FetchSimilar(f"models/title-{dept_id_all}.json",f"{URLS[dept_id_all]}{page}")
+        titles_bold=FetchSimilar(f"models/title-{dept_id_all}_bold.json",f"{URLS[dept_id_all]}{page}")
         
         if len(titles_all)>len(titles_bold):
-            pivot=len(titles_bold)
             break
     else:
         raise FetchError("Fetch Failed, Major Announcements are everywhere.")
-        
-    priv_idx = IndexPrevious(titles_all,buffer_file)
-
-    # 최신항목이 기존 항목과 같은경우
-    if (priv_idx == pivot):
-        return
-    # 버퍼 파일이나 기존 항목이 없는경우
-    elif (priv_idx is None):
-        idx = -1
-    # pivot < priv_idx 인 경우
-    elif (pivot < priv_idx):
-        idx = priv_idx -1
-    # 발생할 수 없는 시나리오 (pivot > priv_idx 인 경우)
-    else :
-        raise IndexError(f"priv_idx Cannot Have Value of {priv_idx}.")
-
-
-    overview={
-        'dept': '경제학과',
-        'dept_id':DEPT_ID,
-        'title': titles_all[idx],
-        #'date': FetchSimilar(MODEL_DATE,f"{ECO_URL}{page}")[idx],
-        'level': '일반 공지사항',
-        'url': FetchSimilar(MODEL_URL,f"{ECO_URL}{page}")[idx],
-        'latest': titles_all[pivot] == titles_all[idx]
-    }
     
-    return overview
+    #차집합 titles = titles_all - titles_bold
+    titles = [item for item in titles_all if item not in titles_bold]
 
+    return titles
+
+# 속성 이름에 의한 구분이 어려운경우
+def FetchAixbold(dept_id):
+
+    titles_all=FetchSimilar(f"models/title-{dept_id}.json",f"{URLS[dept_id]}")
+    titles_normalized = [unicodedata.normalize('NFC', title) for title in titles_all]
+    filtered = [item for item in titles_normalized if '[공지]' in item]
+
+    return filtered
 
 
 if __name__ == '__main__':
-
-    result=FetchSimilar("models/disu-title.json", f"{DISU_URL}1")
-    #result=FetchSimilar("models/usaint-title.json", f"{USAINT_URL}")
+    #result = UpdateFetch("disu_bold",summary=False)
+    result = UpdateFetch("aix_nonbin")
     print(result)

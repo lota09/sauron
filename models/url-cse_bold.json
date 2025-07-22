@@ -1,0 +1,139 @@
+{
+    "stack_list": [
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "section",
+                    {
+                        "class": [
+                            "notice_wrap",
+                            "cont_wrap"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "container"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "notice_list"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "table",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "tbody",
+                    {
+                        "class": "",
+                        "style": ""
+                    },
+                    3
+                ],
+                [
+                    "tr",
+                    {
+                        "class": [
+                            "bo_notice"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "td",
+                    {
+                        "class": [
+                            "td_subject"
+                        ],
+                        "style": "padding-left:0px"
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "bo_tit"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "a",
+                    {
+                        "class": "",
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "68351d1bd0b865d161b859915700ef389477c62d9a549dd1c82f1b555845ae9f",
+            "stack_id": "rule_ef9i",
+            "alias": ""
+        }
+    ]
+}

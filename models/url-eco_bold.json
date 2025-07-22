@@ -21,24 +21,27 @@
                 [
                     "body",
                     {
-                        "class": [
-                            "page-template-default",
-                            "page",
-                            "page-id-13",
-                            "wp-embed-responsive",
-                            "wpb-js-composer",
-                            "js-comp-ver-6.0.3",
-                            "vc_responsive"
-                        ],
-                        "style": ""
+                        "style": "",
+                        "class": ""
                     },
-                    0
+                    1
                 ],
                 [
                     "div",
                     {
                         "style": "",
                         "class": ""
+                    },
+                    0
+                ],
+                [
+                    "section",
+                    {
+                        "class": [
+                            "notice_wrap",
+                            "cont_wrap"
+                        ],
+                        "style": ""
                     },
                     0
                 ],
@@ -55,12 +58,16 @@
                 [
                     "div",
                     {
-                        "class": [
-                            "vc_row",
-                            "wpb_row",
-                            "vc_row-fluid"
-                        ],
-                        "style": ""
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "form",
+                    {
+                        "style": "",
+                        "class": ""
                     },
                     0
                 ],
@@ -68,11 +75,47 @@
                     "div",
                     {
                         "class": [
-                            "wpb_column",
-                            "vc_column_container",
-                            "vc_col-sm-12"
+                            "tbl_head01",
+                            "tbl_wrap"
                         ],
                         "style": ""
+                    },
+                    0
+                ],
+                [
+                    "table",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "tbody",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "tr",
+                    {
+                        "class": [
+                            "bo_notice",
+                            "bo_notice even"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "td",
+                    {
+                        "class": [
+                            "td_subject"
+                        ],
+                        "style": "padding-left:0px"
                     },
                     0
                 ],
@@ -80,88 +123,21 @@
                     "div",
                     {
                         "class": [
-                            "vc_column-inner"
+                            "bo_tit"
                         ],
                         "style": ""
                     },
                     0
                 ],
                 [
-                    "div",
+                    "a",
                     {
-                        "class": [
-                            "wpb_wrapper"
-                        ],
-                        "style": ""
-                    },
-                    1
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "row",
-                            "justify-content-center",
-                            "notice_wrap"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "col-12"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "ul",
-                    {
-                        "class": [
-                            "notice-lists"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "li",
-                    {
-                        "class": [
-                            "start"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "row",
-                            "no-gutters",
-                            "align-items-center"
-                        ],
-                        "style": ""
-                    },
-                    0
-                ],
-                [
-                    "div",
-                    {
-                        "class": [
-                            "notice_col1",
-                            "m-text-left"
-                        ],
-                        "style": ""
+                        "style": "",
+                        "class": ""
                     }
                 ]
             ],
-            "wanted_attr": null,
+            "wanted_attr": "href",
             "is_full_url": null,
             "is_non_rec_text": null,
             "url": "",

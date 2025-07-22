@@ -8,12 +8,12 @@
 
 import json
 import requests
-from KakaoAuth import *
+import KakaoAuth
 from Errors import KakaoTalkError
 
 KAKAO_API_URL_SELF = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
 KAKAO_API_URL_FRIEND = "https://kapi.kakao.com/v1/api/talk/friends/message/default/send"
-
+SSU_IMG = "https://i.namu.wiki/i/iTUG7utdQfV0Pf6wxnxXQmphtV1A-OhXYCJ--hCOqrpPo4-YaZ7p3Opva_NHtI69EHhfR7yV2Vsg5TdiR6FfXEPIOpGfler3DSqPrTU1V95N5vXqOPD1i1kjFHk-4syUN5lIkEUFRuk3cvJPpmWVJQ.svg"
 
 def SendSelfMessage(components):
     """
@@ -21,12 +21,11 @@ def SendSelfMessage(components):
     """
 
     # 1. Access Token 발급 또는 갱신
-    access_token = get_access_token()
+    access_token = KakaoAuth.get_access_token()
         
     #메시지 구성요소
     dept= components['dept']
     title= components['title']
-    level= components['level']
     url= components['url']
     summary= components['summary']
 
@@ -45,8 +44,8 @@ def SendSelfMessage(components):
                         }
                     },
                     "item_content": { 
-                        "profile_text": f"{dept} {level}",
-                        "profile_image_url": "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg",
+                        "profile_text": f"{dept}",
+                        "profile_image_url": SSU_IMG,
                     }
                 }
             )
@@ -72,12 +71,11 @@ def SendFriendMessage(components,receiver_uuids):
     """
 
     # 1. Access Token 발급 또는 갱신
-    access_token = get_access_token()
+    access_token = KakaoAuth.get_access_token()
         
     #메시지 구성요소
     dept= components['dept']
     title= components['title']
-    level= components['level']
     url= components['url']
     summary= components['summary']
 
@@ -97,8 +95,8 @@ def SendFriendMessage(components,receiver_uuids):
                         }
                     },
                     "item_content": { 
-                        "profile_text": f"{dept} {level}",
-                        "profile_image_url": "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg",
+                        "profile_text": f"{dept}",
+                        "profile_image_url": SSU_IMG,
                     }
                 }
             )
@@ -124,7 +122,7 @@ def SendDebugMessage(content,receiver_uuids):
     """
 
     # 1. Access Token 발급 또는 갱신
-    access_token = get_access_token()
+    access_token = KakaoAuth.get_access_token()
 
     # 2. 메시지 템플릿 구성
     payload = \
@@ -169,7 +167,7 @@ if __name__ == "__main__":
         {
             'dept': '차세대반도체학과',
             'title': '차세대반도체학과 반도체 세미나 I Advanced Package 이해 I 2024. 11. 20. (수) I 반도체산업이해(특강)',
-            'date': '2024-11-18', 'level': '일반 공지사항', 'url': 'https://www.disu.ac.kr/community/notice?md=v&bbsidx=7978',
+            'date': '2024-11-18', 'url': 'https://www.disu.ac.kr/community/notice?md=v&bbsidx=7978',
             'summary': '- 숭실대학교 차세대반도체학과에서 반도체 산업이해 오픈 특강을 진행함\n- 반도체 산업에서 패키지의 중요성에 대해 이해하는 시간이 되기를 바람'
         }
     #result=SendSelfMessage(components)
