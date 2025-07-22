@@ -33,7 +33,12 @@ class dept_info:
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.firefox.service import Service
         from selenium.webdriver.firefox.options import Options
-        from Hyperparms import DEBUG_EN
+        
+        try:
+            import Hyperparms
+            DEBUG_EN = Hyperparms.DEBUG_EN
+        except:
+            DEBUG_EN = False
 
         if DEBUG_EN:
             # Chrome 사용
