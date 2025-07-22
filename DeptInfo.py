@@ -9,14 +9,49 @@
 ICON_URL_SSU = "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg"
 
 class dept_info:
-    def __init__(self,dept_id,dept_ko,url,channel_id,icon_url,div_args=None,misc=[]):
+    def __init__(self,dept_id,dept_ko,url,channel_id,icon_url,div_args=None,etc={}):
         self.dept_id = dept_id
         self.dept_ko = dept_ko
         self.url = url
         self.channel_id = channel_id
         self.icon_url = icon_url
         self.div_args = div_args
-        self.misc = misc            # 3 Type : binary, even, nonbin
+        self.etc = etc
+
+        self.css_sel = etc.get("css_sel",None)
+
+        if self.css_sel is None:
+            self.html = None
+        else :
+            self.html = self.build_htmlpage(self.css_sel)
+
+
+    def build_htmlpage(self,css_sel):
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from Hyperparms import DEBUG_EN
+
+        driver = webdriver.Chrome()
+
+        driver.get(self.url)
+
+        # 제목 링크가 로딩될 때까지 대기
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, css_sel))
+            )
+        finally:
+            html = driver.page_source
+
+            if DEBUG_EN:
+                with open("dev/fetched_selenium.html", "w", encoding="utf-8") as f:
+                    f.write(html)
+
+            driver.quit()
+        
+        return html
 
 usaint = \
     dept_info("usaint",
@@ -26,41 +61,37 @@ usaint = \
               ICON_URL_SSU,
               {'class_':'bg-white p-4 mb-5'})
 
-disu_bold = \
-    dept_info("disu_bold",
+disu = \
+    dept_info("disu",
               "차세대반도체학과",
               'https://www.disu.ac.kr/community/notice?cidx=42&page=1',
               "1355609212016918608",
               ICON_URL_SSU,
-              {'class_':'bbs_contents'},
-              misc = ["binary"])
+              {'class_':'bbs_contents'})
 
-eco_bold = \
-    dept_info("eco_bold",
+eco = \
+    dept_info("eco",
               "경제학과",
               'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1',
               "1355609054629593289",
               ICON_URL_SSU,
-              {'id':'bo_v_con'},
-              misc = ["even"])
+              {'id':'bo_v_con'})
 
-cse_bold = \
-    dept_info("cse_bold",
+cse = \
+    dept_info("cse",
               "컴퓨터학부",
               'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1',
               "1358816727256793318",
               ICON_URL_SSU,
-              {'id':'bo_v_con'},
-              misc = ["even"])
+              {'id':'bo_v_con'})
 
-aix_nonbin = \
-    dept_info("aix_nonbin",
+aix = \
+    dept_info("aix",
               "AI융합학부",
               'https://aix.ssu.ac.kr/notice.html?&page=1',
               "1360537451981967390",
               ICON_URL_SSU,
-              {"class":"table-responsive"},
-              misc = ["nonbin"])
+              {"class":"table-responsive"})
 
 disu_polaris = \
     dept_info("disu_polaris",
@@ -68,14 +99,15 @@ disu_polaris = \
               "https://www.disu.ac.kr/community/notice?cidx=38&page=1",
               "1355609212016918608",
               ICON_URL_SSU,
-              {'class_':'bbs_contents'},
-              misc = ["binary"])
+              {'class_':'bbs_contents'})
 
 startup = \
     dept_info("startup",
               "숭실대학교 창업지원단",
               "https://startup.ssu.ac.kr/board/notice?boardEnName=notice&pageNum=1",
               "",
-              ICON_URL_SSU)
+              ICON_URL_SSU,
+              etc={"css_sel":"[class^='Notice_title__'] a",
+                   "url_prefix":"https://startup.ssu.ac.kr"})
 
-DEPTS = [usaint,disu_bold,eco_bold,cse_bold,aix_nonbin,disu_polaris]
+DEPTS = [usaint,disu,eco,cse,aix,disu_polaris,startup]

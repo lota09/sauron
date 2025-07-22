@@ -16,14 +16,29 @@ import DeptInfo
 
 scraper = AutoScraper()
 
-wanted_list = ["2025.06.16"]
+dept = DeptInfo.startup
+html = dept.html
 
-result = scraper.build(DeptInfo.startup.url, wanted_list,update=False,text_fuzz_ratio=1)
+wanted_title = "2025년 2학기 창업지원단 개설 교과목 수강신청 안내"
+wanted_url = "/board/notice/3667?boardEnName=notice&pageNum=1"
+
+wanted_dict = {"title" : [wanted_title],
+               "url": [wanted_url]}
+
+
+#url을 소스로 하는경우
+if html is None:
+    source_args = {"url":dept.url}
+#html을 소스로 하는경우
+else:
+    source_args = {"html":html}
+
+result = scraper.build(**source_args, wanted_dict=wanted_dict, update=False, text_fuzz_ratio=1)
+
 length=len(result)
 
 print(f"[{length}개 항목]")
 for i,item in enumerate(result):
     print(f"{i} : {item}")
 
-scraper.save('models/test.json')
-
+scraper.save('models/model_test.json')

@@ -26,151 +26,85 @@ except:
 
 scraper = AutoScraper()
 
-def FetchSimilar(model,url):
-    scraper.load(model)
-    return scraper.get_result_similar(url)
+class NoticeData:
+    def __init__(self,dept,title,url,summary =""):
+        self.dept = dept
+        self.title = title
+        self.url = url
+        self.summary = summary
 
 
-def isDemoted(dept):
+
+def UpdateNotice(dept):
     dept_id = dept.dept_id
+    html = dept.html
 
-    # BOLD 구분 유형에 따른 Demotion 함수 결정
-    if "binary" in dept.misc:
-        demotion_func = FetchNotbold
-    elif "even" in dept.misc:
-        demotion_func = FetchAll
-
-    #Demotion 개념이 없는 부서일 경우
+    #url을 소스로 하는경우
+    if html is None:
+        source_args = {"url":dept.url}
+    #html을 소스로 하는경우
     else:
-        return False
+        source_args = {"html":html}
 
-    titles = demotion_func(dept)
-    #종료된 공지사항에서 기록된 마지막 공지를 찾음
-    return Update.IndexPrevious(titles,dept_id) is not None
+    # 그룹된 결과 가져오기
+    model_id = dept_id.split('_')[0]
+    scraper.load(f"models/model_{model_id}.json")
+    scraped_dict = scraper.get_result_similar(**source_args, group_by_alias=True)
 
+    titles = scraped_dict["title"]
+    urls = scraped_dict["url"]
 
-def MakePointer(last_idx,pivot=0):
-    # 최신항목이 기존 항목과 같은경우
-    if (last_idx == pivot):
-        return
-    # 버퍼 파일이나 기존 항목이 없는경우
-    elif (last_idx is None):
-        new_idx = pivot
-    # pivot < last_idx 인 경우
-    elif (pivot < last_idx):
-        new_idx = last_idx -1
-    # 발생할 수 없는 시나리오 (pivot > last_idx 인 경우)
-    else :
-        raise IndexError(f"last_idx Cannot Have Value of {last_idx}.")
+    # 크롤링한 데이터가 없는경우
+    if not titles or not urls:
+        raise FetchError("Fetch Failed, There's nothing to fetch")
+
+    # 신규 항목 인덱스 구하기 (차집합)
+    new_indices = Update.UpdateState(dept_id, urls)
+    updated_count = len(new_indices)
+
+    # 신규 항목이 너무 많은 경우
+    if updated_count > 5:
+        raise IndexError(f"Too many updated anouncement. Omitted {updated_count} new announcements.")
+
+    # 새로운 항목이 없는경우
+    if not new_indices:
+        return None
     
-    return new_idx
-
-
-def UpdateFetch(dept):
-    dept_id = dept.dept_id
-    url = dept.url
-
-    if "nonbin" in dept.misc:
-        pivot = len(FetchAixbold(dept))
-    else:
-        pivot = 0
-
-    model_title= f"models/title-{dept_id}.json"
-    model_url= f"models/url-{dept_id}.json"
+    notice_list = []
     
-    titles= FetchSimilar(model_title,url)
-    last_idx = Update.IndexPrevious(titles,dept_id)
+    # 신규 항목들에 대해서 component 생성
+    for new_idx in new_indices:
 
-    new_idx = MakePointer(last_idx,pivot)
-    #마지막 공지가 최신공지인 경우
-    if new_idx is None:
-        return
-    
-    #마지막 공지사항이 종료된 공지사항이면 갱신함
-    if isDemoted(dept):
-        Update.UpdateLatest(titles[new_idx],dept_id)
-        return
+        title = titles[new_idx]
+        url = dept.etc.get("url_prefix","") + urls[new_idx]
 
-    content_url = FetchSimilar(model_url,url)[new_idx]
+        #공지 내용 가져오기
+        content = Content.FetchContent(dept.div_args,url)
 
-    overview={
-        'dept': dept,
-        'title': unicodedata.normalize('NFC', titles[new_idx]),
-        'url': content_url,
-        'summary' : '',
-        'latest': titles[pivot] == titles[new_idx]
-    }
+        #클로바 요약
+        if (not SUMMARY_EN):
+            summary = "요약기능이 비활성화되었습니다."
+        elif (content):
+            try:
+                summary = ClovaSummary.Summarize(f"제목:{title}\n내용:\n{content}")
+            except SummaryError as e:
+                summary = "요약을 실패하였습니다."
+        else:
+            summary = "요약할 내용이 없습니다."
 
-    #공지 내용 가져오기
-    content = Content.FetchContent(dept.div_args,content_url)
-    
-    #클로바 요약
-    if (SUMMARY_EN and content):
-        try:
-            overview['summary']= ClovaSummary.Summarize(f"제목:{overview['title']}\n내용:\n{content}")
-        except SummaryError as e:
-            overview['summary']= "요약을 실패하였습니다"
+        notice_list.append(NoticeData(dept, title, url, summary))
 
-    return overview
-
-# bold - notbold 두가지 형태로 구분할수 있는경우
-def FetchNotbold(dept):
-
-    url = dept.url[:-1]
-    dept_id = dept.dept_id
-
-    # 예를들어, disu_bold 에서 앞부분 disu만 가져옴
-    dept_id_normal = dept_id.split('_')[0]
-
-    # 최대 5번까지 시도
-    for page in range (1,MAX_PAGES+1):
-        try:
-            titles = FetchSimilar(f"models/title-{dept_id_normal}.json", f"{url}{page}")
-            if not titles:
-                continue
-            break
-        except Exception as e:
-            raise FetchError(e) from e
-    else:
-        raise FetchError("Fetch Failed After 5 Pages.")
-    
-    return titles
-
-# ("even" 처럼) 같은 이름이 포함된 HTML속성때문에 bold - all 두가지 모델만 있는경우
-def FetchAll(dept):
-
-    url = dept.url[:-1]
-    dept_id = dept.dept_id
-
-    # 예를들어, disu_bold 에서 앞부분 disu만 가져옴
-    dept_id_all = dept_id.split('_')[0]
-
-    # 일반 공지사항 위치 찾기 - 최대 5번까지 시도
-    for page in range (1,MAX_PAGES+1):
-        titles_all=FetchSimilar(f"models/title-{dept_id_all}.json",f"{url}{page}")
-        titles_bold=FetchSimilar(f"models/title-{dept_id_all}_bold.json",f"{url}{page}")
-        
-        if len(titles_all)>len(titles_bold):
-            break
-    else:
-        raise FetchError("Fetch Failed, Major Announcements are everywhere.")
-    
-    #차집합 titles = titles_all - titles_bold
-    titles = [item for item in titles_all if item not in titles_bold]
-
-    return titles
-
-# 속성 이름에 의한 구분이 어려운경우
-def FetchAixbold(dept):
-
-    titles_all=FetchSimilar(f"models/title-{dept.dept_id}.json",dept.url)
-    titles_normalized = [unicodedata.normalize('NFC', title) for title in titles_all]
-    filtered = [item for item in titles_normalized if '[공지]' in item]
-
-    return filtered
+    return notice_list
 
 
 if __name__ == '__main__':
-    #result = UpdateFetch("disu_bold",summary=False)
-    result = UpdateFetch("aix_nonbin")
+    import DeptInfo
+    result = UpdateNotice(DeptInfo.usaint)
+
     print(result)
+
+    length = len(result)
+
+    print(f"[{length}개 항목]")
+    for i,item in enumerate(result):
+        print(f"{i} : {item}")

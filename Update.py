@@ -51,3 +51,22 @@ def UpdateLatest(new_title,dept_id = None,file_path = None):
         file.write(new_title + '\n')
         file.close()
     return 0
+
+def UpdateState(dept_id,urls):
+    file_path = f"buffers/last-{dept_id}.txt"
+
+    #부모 디렉터리 없으면 생성
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            old_urls = set(line.strip() for line in f if line.strip())
+            new_indices = [i for i, url in enumerate(urls) if url not in old_urls]
+    except FileNotFoundError:
+        new_indices = [0]
+
+    # buffers/last-{dept_id}.txt 파일 갱신
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(urls))
+
+    return new_indices

@@ -95,20 +95,20 @@ def SendDebugMessage(content):
 
 
 # 임베드 메시지 전송 함수
-def SendEmbedMessage(components):
+def SendEmbedMessage(notice_data):
+    #메시지 구성요소
+    dept= notice_data.dept
+    title= notice_data.title
+    url= notice_data.url
+    summary= notice_data.summary
 
     if DEBUG_EN is True:
         channel_id = CHANNEL_ID_DEBUG
         mention = ""
     else:
-        channel_id = dept.channel.id
+        channel_id = dept.channel_id
         mention = "@everyone"
 
-    #메시지 구성요소
-    dept= components['dept']
-    title= components['title']
-    url= components['url']
-    summary= components['summary']
     if summary.strip():
         summary = f"\u200b\n{summary}\n\u200b"
 

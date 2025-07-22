@@ -36,25 +36,19 @@ def main():
 
         CURRENT_DEPT = dept.dept_id
 
-        for i in range(MAX_RETRIES):
-            
-            #공지 정보 가져오기, 최신 공지 비교
-            if (components := Overview.UpdateFetch(dept)) is None:
-                break
+        #공지 정보 가져오기, 최신 공지 비교
+        notice_list = Overview.UpdateNotice(dept)
+        if notice_list is None:
+            continue
+
+        for notice_data in notice_list:
 
             #최신 공지 전달
-            #Notify.Email(components)
-            DiscordMsg.SendEmbedMessage(components)
-            #KakaoTalk.SendFriendMessage(components,RECV_UUID)
+            DiscordMsg.SendEmbedMessage(notice_data)
             
             #최신 공지 갱신
-            Update.UpdateLatest(components['title'],dept.dept_id)
+            #Update.UpdateLatest(notice_list['title'],dept.dept_id)
 
-            #가장 최신항목이면 다음 dept
-            if (components['latest']):
-                break
-        else:
-            raise IndexError(f"Announcement Still Outdated After {MAX_RETRIES} Fetchs. \nOutdated Data :{components}")
 
 
     #최신화 시간 갱신
