@@ -75,7 +75,7 @@ def UpdateNotice(dept):
     # 신규 항목들에 대해서 component 생성
     for new_idx in new_indices:
 
-        title = titles[new_idx]
+        title = unicodedata.normalize('NFC', titles[new_idx])
         url = dept.etc.get("url_prefix","") + urls[new_idx]
 
         #공지 내용 가져오기
@@ -100,8 +100,6 @@ def UpdateNotice(dept):
 if __name__ == '__main__':
     import DeptInfo
     result = UpdateNotice(DeptInfo.usaint)
-
-    print(result)
 
     length = len(result)
 

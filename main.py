@@ -63,12 +63,6 @@ if __name__ == "__main__":
         try:
             main()
             sys.exit(0)
-        #카카오톡 에러 발생시 디스코드는 문제 없을 가능성이 큼
-        except Errors.KakaoTalkError as e:
-            debug_message = Errors.InfoCollect(e,CURRENT_DEPT)
-            DiscordMsg.SendDebugMessage(debug_message)
-            print(debug_message)
-            raise e
         #연결 오류 발생시 재시도
         except (ConnectionError, RemoteDisconnected):
             time.sleep(RETRY_DELAY)
