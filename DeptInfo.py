@@ -31,9 +31,24 @@ class dept_info:
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.firefox.service import Service
+        from selenium.webdriver.firefox.options import Options
         from Hyperparms import DEBUG_EN
 
-        driver = webdriver.Chrome()
+        if DEBUG_EN:
+            # Chrome 사용
+            driver = webdriver.Chrome()
+        else:
+            # Firefox 옵션 설정 (headless 예시 포함)
+            options = Options()
+            options.add_argument('--headless')
+
+            # Firefox 실행 파일 위치 지정
+            options.binary_location = "/usr/bin/firefox"
+            # geckodriver 서비스 설정
+            service = Service(executable_path="/usr/local/bin/geckodriver")
+            # 웹드라이버 객체 생성
+            driver = webdriver.Firefox(service=service, options=options)
 
         driver.get(self.url)
 
