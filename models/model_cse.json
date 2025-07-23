@@ -64,19 +64,10 @@
                     0
                 ],
                 [
-                    "form",
-                    {
-                        "style": "",
-                        "class": ""
-                    },
-                    0
-                ],
-                [
                     "div",
                     {
                         "class": [
-                            "tbl_head01",
-                            "tbl_wrap"
+                            "notice_list"
                         ],
                         "style": ""
                     },
@@ -101,10 +92,120 @@
                 [
                     "tr",
                     {
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "td",
+                    {
                         "class": [
-                            "bo_notice",
-                            "bo_notice even"
+                            "td_subject"
                         ],
+                        "style": "padding-left:0px"
+                    }
+                ]
+            ],
+            "wanted_attr": null,
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "58290a6269353d01404ab549c63bc2817fe1139bab807df44b6a1835fbbf5fc9",
+            "stack_id": "rule_yso6",
+            "alias": "title"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "section",
+                    {
+                        "class": [
+                            "notice_wrap",
+                            "cont_wrap"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "container"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "notice_list"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "table",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "tbody",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "tr",
+                    {
                         "style": ""
                     },
                     0
@@ -141,7 +242,9 @@
             "is_full_url": null,
             "is_non_rec_text": null,
             "url": "",
-            "alias": ""
+            "hash": "ae198398ce2ec2fcfc86c3bc3464a783a6a75ed704a3e2964c697fd398e7c145",
+            "stack_id": "rule_u0il",
+            "alias": "url"
         }
     ]
 }

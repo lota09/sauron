@@ -15,21 +15,14 @@ from Errors import DiscordError
 
 # 디스코드 설정
 BOT_TOKEN_FILE = 'secrets/discord-api-info.json'
-CHANNEL_ID={
-    "usaint": "1355604572353069200",
-    "disu_bold": "1355609212016918608",
-    "eco_bold": "1355609054629593289",
-    "cse_bold": "1358816727256793318",
-    "aix_nonbin": "1360537451981967390",
+CHANNEL_ID_DEBUG = "1355610759777882162"
+ICON_DEBUG = "https://cdn.discordapp.com/attachments/1355611235156234473/1360547635672649869/c7dca22d3f65a53a.png?ex=67fb843a&is=67fa32ba&hm=f33da564c49964ab9ef2ce280a651dc9f968926d70be675db62f4fd8af4332fb&"
 
-    "debug" : "1355610759777882162"
-}
-ICONS={
-    "usaint" : "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg",
-
-    "debug" : "https://cdn.discordapp.com/attachments/1355611235156234473/1360547635672649869/c7dca22d3f65a53a.png?ex=67fb843a&is=67fa32ba&hm=f33da564c49964ab9ef2ce280a651dc9f968926d70be675db62f4fd8af4332fb&"
-}
-
+try:
+    import Hyperparms
+    DEBUG_EN = Hyperparms.DEBUG_EN
+except:
+    DEBUG_EN = False
 
 def LoadSecrets(file_path):
     if not os.path.exists(file_path):
@@ -60,7 +53,7 @@ def SendContentMessage(content):
     }
     data = {"content": content}
 
-    discord_api_url = f"https://discord.com/api/v10/channels/{CHANNEL_ID['debug']}/messages"
+    discord_api_url = f"https://discord.com/api/v10/channels/{CHANNEL_ID_DEBUG}/messages"
     response = requests.post(discord_api_url, headers=headers, data=json.dumps(data))
 
     if response.status_code == 200 or response.status_code == 201:
@@ -74,11 +67,11 @@ def SendDebugMessage(content):
 
     embed = {
         "title": f"⚠️ 디버그 메시지",
-        "description": f"\u200b\n{content}\n\n@everyone",
+        "description": f"\u200b\n{content}",
         "color": 0xe74c3c,  # 빨간색
         "footer": {
             "text": "사우론의 눈" ,
-            "icon_url": ICONS["debug"]
+            "icon_url": ICON_DEBUG
         },
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
@@ -92,7 +85,7 @@ def SendDebugMessage(content):
         "Content-Type": "application/json",
     }
 
-    discord_api_url = f"https://discord.com/api/v10/channels/{CHANNEL_ID['debug']}/messages"
+    discord_api_url = f"https://discord.com/api/v10/channels/{CHANNEL_ID_DEBUG}/messages"
     response = requests.post(discord_api_url, headers=headers, data=json.dumps(data))
 
     if response.status_code == 200 or response.status_code == 201:
@@ -102,15 +95,20 @@ def SendDebugMessage(content):
 
 
 # 임베드 메시지 전송 함수
-def SendEmbedMessage(components):
-
+def SendEmbedMessage(notice_data):
     #메시지 구성요소
-    dept= components['dept']
-    dept_id= components['dept_id']
-    title= components['title']
-    url= components['url']
-    summary= components['summary']
-    icon_url = ICONS.get(dept_id,ICONS["usaint"])
+    dept= notice_data.dept
+    title= notice_data.title
+    url= notice_data.url
+    summary= notice_data.summary
+
+    if DEBUG_EN is True:
+        channel_id = CHANNEL_ID_DEBUG
+        mention = ""
+    else:
+        channel_id = dept.channel_id
+        mention = "@everyone"
+
     if summary.strip():
         summary = f"\u200b\n{summary}\n\u200b"
 
@@ -119,11 +117,11 @@ def SendEmbedMessage(components):
         "description": summary,
         "color": 0x62c6c4,  # 파란색
         "fields": [
-            {"name": "🔗 링크", "value": f"[▶자세히 보기]({url})\n\u200b\n@everyone", "inline": True},
+            {"name": "🔗 링크", "value": f"[▶자세히 보기]({url})\n\u200b\n{mention}", "inline": True},
         ],
         "footer": {
-            "text": dept ,
-            "icon_url": icon_url
+            "text": dept.dept_ko ,
+            "icon_url": dept.icon_url
         },
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
@@ -137,7 +135,7 @@ def SendEmbedMessage(components):
         "Content-Type": "application/json",
     }
 
-    discord_api_url = f"https://discord.com/api/v10/channels/{CHANNEL_ID[dept_id]}/messages"
+    discord_api_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     response = requests.post(discord_api_url, headers=headers, data=json.dumps(data))
     
     if response.status_code == 200 or response.status_code == 201:
@@ -166,4 +164,4 @@ Outdated Data :{'dept': '경제학과', 'title': '경제학과 성적 우수 백
 """
     SendContentMessage("인간 세계의 끝이 도래했다.")
     SendDebugMessage(content)
-    #SendEmbedMessage(components)
+    SendEmbedMessage(components)

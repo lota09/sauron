@@ -8,7 +8,7 @@
 
 # -*- coding: utf-8 -*-
 
-def InfoCollect(e):
+def InfoCollect(e,current_dept=None):
     import traceback
     import os
 
@@ -20,9 +20,14 @@ def InfoCollect(e):
     line_number = last_trace.lineno  
     function_name = last_trace.name
 
+    #에러가 발생한 Dept가 정의되지 않은경우
+    if current_dept is None:
+        current_dept = "Unknown"
+
     debug_message = (
         f"📜 Module: {module_name}, line {line_number}\n"
         f"🔧 Function: {function_name}\n"
+        f"🏛️ Dept: {current_dept}\n"
         f"❌ Exception: {type(e).__name__} - {e}"
     )
     return debug_message
