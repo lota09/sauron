@@ -16,10 +16,10 @@ import DeptInfo
 
 scraper = AutoScraper()
 
-dept = DeptInfo.startup
+dept = DeptInfo.infocom
 
 dept_id = dept.dept_id
-html = dept.html
+html = dept.build_htmlpage()
 
 #url을 소스로 하는경우
 if html is None:
@@ -30,19 +30,14 @@ else:
 
 # 그룹된 결과 가져오기
 scraper.load(f"models/model_test.json")
-result = scraper.get_result_similar(**source_args, group_by_alias=False, contain_sibling_leaves=False)
+result = scraper.get_result_similar(**source_args, group_by_alias=True, contain_sibling_leaves=False)
 
-length=len(result)
+# url_prefix 가 포함된경우 넣기
+result["url"] = [dept.etc.get("url_prefix","") + url for url in result["url"]]
+result_list = result["title"] + result["url"]
 
-print(result)
+length=len(result_list)
 
 print(f"[{length}개 항목]")
-for i,item in enumerate(result):
+for i,item in enumerate(result_list):
     print(f"{i} : {item}")
-
-
-
-
-
-    #aix는 주요 공지사항 개념이 없고, 장기(고정) 공지사항이 있으며 둘을 구분하기 어려움
-    #새로운 접근법을 사용해야할수도 : 날짜로 최신항목을 구분하는 방법이 있을듯 함 - 그런데 [공지]와 [공지]가 아닌것이 같은날짜에 올라오는경우 예외처리해야함

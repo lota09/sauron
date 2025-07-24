@@ -1,0 +1,1181 @@
+{
+    "stack_list": [
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "subject",
+                            "on"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": null,
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "09b078e05bdd1e43687168e5883857f4b072c8e4631294d6f84771fee2acdc89",
+            "stack_id": "rule_fr8i",
+            "alias": "title"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    9
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "3acd8e57a3b422ddbf747453b771d9550d2c120a61c24985a33aaa259052145c",
+            "stack_id": "rule_ibia",
+            "alias": "url"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    8
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "ec71b3600387dd569ae22e388cc5df98bb37652fa51ccb6944ece0cab19cef36",
+            "stack_id": "rule_lcx8",
+            "alias": "url"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    7
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "67ef71f504ead354b82dfa8324d738646a07843d6a7aef8268e98f36f27be886",
+            "stack_id": "rule_c88z",
+            "alias": "url"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    6
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "cd7e131d4c732866634a017ce9df56f63ab5995bda83d140e84fe19151b15b9d",
+            "stack_id": "rule_v105",
+            "alias": "url"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    5
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "f0f05780e5cda47428fee148d294a902427ab39ee365f702d91ab327ed099c13",
+            "stack_id": "rule_55gd",
+            "alias": "url"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    4
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "359a20d6414b5b06fc397442cc0b8c0b69f1e5cf3ede72a0bc40f1529a6a885d",
+            "stack_id": "rule_1jge",
+            "alias": "url"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    3
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "97c7eb15a4d09145222aa27d6f111c1bfad1d19b994d3adb0484430dc4386ca5",
+            "stack_id": "rule_erze",
+            "alias": "url"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    2
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "3dfbc1d6fbcbb9274acef7d0db69f37e2a670a65ae1d46cc92a7a0beea4a08c4",
+            "stack_id": "rule_5s9j",
+            "alias": "url"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    1
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "ade0b88a7c987f0249fe512c937e26539a92384706919c3812dcd152c4208267",
+            "stack_id": "rule_7ehh",
+            "alias": "url"
+        },
+        {
+            "content": [
+                [
+                    "[document]",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "html",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "body",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    1
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "undergraduate"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "inner_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "style": "",
+                        "class": ""
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "list_box"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "a",
+                    {
+                        "class": [
+                            "con_box"
+                        ],
+                        "style": ""
+                    }
+                ]
+            ],
+            "wanted_attr": "href",
+            "is_full_url": null,
+            "is_non_rec_text": null,
+            "url": "",
+            "hash": "7bd048a197b93ec2362fc7879d218437a3606bad708722ec6c36206e92f4fec5",
+            "stack_id": "rule_8gql",
+            "alias": "url"
+        }
+    ]
+}

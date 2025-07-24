@@ -16,11 +16,11 @@ import DeptInfo
 
 scraper = AutoScraper()
 
-dept = DeptInfo.startup
-html = dept.html
+dept = DeptInfo.infocom
+html = dept.build_htmlpage()
 
-wanted_title = "2025년 2학기 창업지원단 개설 교과목 수강신청 안내"
-wanted_url = "/board/notice/3667?boardEnName=notice&pageNum=1"
+wanted_title = "2025학년도 기업분석 전략특강 & 강소기업 발굴 공모전( ~8/17(일))"
+wanted_url = "/kor/notice/undergraduate.php?m=v&idx=2203&pNo=1&code=notice"
 
 wanted_dict = {"title" : [wanted_title],
                "url": [wanted_url]}
@@ -33,7 +33,7 @@ if html is None:
 else:
     source_args = {"html":html}
 
-result = scraper.build(**source_args, wanted_dict=wanted_dict, update=False, text_fuzz_ratio=1)
+result = scraper.build(**source_args, wanted_dict=wanted_dict, update=False, text_fuzz_ratio=0.9)
 
 length=len(result)
 

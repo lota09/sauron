@@ -14,7 +14,7 @@ import Content
 import ClovaSummary
 from Errors import FetchError, SummaryError
 
-MAX_PAGES = 5
+UPDATE_LIMIT = 5
 
 try:
     import Hyperparms
@@ -37,7 +37,7 @@ class NoticeData:
 
 def UpdateNotice(dept):
     dept_id = dept.dept_id
-    html = dept.html
+    html = dept.build_htmlpage()
 
     #url을 소스로 하는경우
     if html is None:
@@ -63,7 +63,7 @@ def UpdateNotice(dept):
     updated_count = len(new_indices)
 
     # 신규 항목이 너무 많은 경우
-    if updated_count > 5:
+    if updated_count > UPDATE_LIMIT:
         raise IndexError(f"Too many updated anouncement. Omitted {updated_count} new announcements.")
 
     # 새로운 항목이 없는경우
