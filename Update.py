@@ -27,7 +27,7 @@ def UpdateLatest(new_title,dept_id = None,file_path = None):
         file.close()
     return 0
 
-def UpdateState(dept_id,urls):
+def UpdateState(dept_id,urls,urls_p2=[]):
     file_path = f"buffers/last-{dept_id}.txt"
 
     #부모 디렉터리 없으면 생성
@@ -40,8 +40,10 @@ def UpdateState(dept_id,urls):
     except FileNotFoundError:
         new_indices = [0]
 
+    updated_urls = urls + urls_p2
+
     # buffers/last-{dept_id}.txt 파일 갱신
     with open(file_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(urls))
+        f.write("\n".join(updated_urls))
 
     return new_indices

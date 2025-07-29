@@ -20,10 +20,7 @@ class dept_info:
 
         self.css_sel = etc.get("css_sel",None)
 
-    def build_htmlpage(self):
-
-        if self.css_sel is None:
-            return
+    def build_htmlpage(self,url):
 
         from selenium import webdriver
         from selenium.webdriver.common.by import By
@@ -53,7 +50,7 @@ class dept_info:
             # 웹드라이버 객체 생성
             driver = webdriver.Firefox(service=service, options=options)
 
-        driver.get(self.url)
+        driver.get(url)
 
         # 제목 링크가 로딩될 때까지 대기
         try:
@@ -70,11 +67,21 @@ class dept_info:
             driver.quit()
         
         return html
+    
+    def build_source(self,page=1):
+        url = self.url.replace("{{page}}", str(page))
+
+        #url을 소스로 하는경우
+        if self.css_sel is None:
+            return {"url":url}
+        #html을 소스로 하는경우
+        else:
+            return {"html":self.build_htmlpage(url)}
 
 usaint = \
     dept_info("usaint",
               "유세인트",
-              'https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/?f&category=%ED%95%99%EC%82%AC&keyword',
+              'https://scatch.ssu.ac.kr/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/page/{{page}}/?f&category=%ED%95%99%EC%82%AC&keyword',
               "1355604572353069200",
               ICON_URL_SSU,
               {'class_':'bg-white p-4 mb-5'})
@@ -82,7 +89,7 @@ usaint = \
 disu = \
     dept_info("disu",
               "차세대반도체학과",
-              'https://www.disu.ac.kr/community/notice?cidx=42&page=1',
+              'https://www.disu.ac.kr/community/notice?cidx=42&page={{page}}',
               "1355609212016918608",
               ICON_URL_SSU,
               {'class_':'bbs_contents'})
@@ -90,7 +97,7 @@ disu = \
 eco = \
     dept_info("eco",
               "경제학과",
-              'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1',
+              'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&page={{page}}',
               "1355609054629593289",
               ICON_URL_SSU,
               {'id':'bo_v_con'})
@@ -98,7 +105,7 @@ eco = \
 cse = \
     dept_info("cse",
               "컴퓨터학부",
-              'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice&page=1',
+              'https://cse.ssu.ac.kr/bbs/board.php?bo_table=notice&page={{page}}',
               "1358816727256793318",
               ICON_URL_SSU,
               {'id':'bo_v_con'})
@@ -106,7 +113,7 @@ cse = \
 aix = \
     dept_info("aix",
               "AI융합학부",
-              'https://aix.ssu.ac.kr/notice.html?&page=1',
+              'https://aix.ssu.ac.kr/notice.html?&page={{page}}',
               "1360537451981967390",
               ICON_URL_SSU,
               {"class":"table-responsive"})
@@ -114,7 +121,7 @@ aix = \
 disu_polaris = \
     dept_info("disu_polaris",
               "차세대반도체학과 POLARIS",
-              "https://www.disu.ac.kr/community/notice?cidx=38&page=1",
+              "https://www.disu.ac.kr/community/notice?cidx=38&page={{page}}",
               "1355609212016918608",
               ICON_URL_SSU,
               {'class_':'bbs_contents'})
@@ -122,7 +129,7 @@ disu_polaris = \
 startup = \
     dept_info("startup",
               "숭실대학교 창업지원단",
-              "https://startup.ssu.ac.kr/board/notice?boardEnName=notice&pageNum=1",
+              "https://startup.ssu.ac.kr/board/notice?boardEnName=notice&pageNum={{page}}",
               "1397154831579484273",
               ICON_URL_SSU,
               etc={"css_sel":"[class^='Notice_title__'] a",
@@ -131,7 +138,7 @@ startup = \
 infocom = \
     dept_info("infocom",
               "숭실대학교 전자정보공학부",
-              "http://infocom.ssu.ac.kr/kor/notice/undergraduate.php",
+              "http://infocom.ssu.ac.kr/kor/notice/undergraduate.php?pNo={{page}}",
               "1398017032666222744",
               ICON_URL_SSU,
               etc={"url_prefix":"http://infocom.ssu.ac.kr"})
