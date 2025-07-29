@@ -20,13 +20,11 @@ class dept_info:
 
         self.css_sel = etc.get("css_sel",None)
 
+    def build_htmlpage(self):
+
         if self.css_sel is None:
-            self.html = None
-        else :
-            self.html = self.build_htmlpage(self.css_sel)
+            return
 
-
-    def build_htmlpage(self,css_sel):
         from selenium import webdriver
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import WebDriverWait
@@ -60,7 +58,7 @@ class dept_info:
         # 제목 링크가 로딩될 때까지 대기
         try:
             WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, css_sel))
+                EC.presence_of_element_located((By.CSS_SELECTOR, self.css_sel))
             )
         finally:
             html = driver.page_source
@@ -130,4 +128,21 @@ startup = \
               etc={"css_sel":"[class^='Notice_title__'] a",
                    "url_prefix":"https://startup.ssu.ac.kr"})
 
-DEPTS = [usaint,disu,eco,cse,aix,disu_polaris,startup]
+infocom = \
+    dept_info("infocom",
+              "숭실대학교 전자정보공학부",
+              "http://infocom.ssu.ac.kr/kor/notice/undergraduate.php",
+              "1398017032666222744",
+              ICON_URL_SSU,
+              etc={"url_prefix":"http://infocom.ssu.ac.kr"})
+
+thinkgood = \
+    dept_info("thinkgood",
+              "씽굿",
+              "https://www.thinkcontest.com/thinkgood/user/contest/index.do",
+              "",
+              None,
+              etc={"css_sel":"[class^='list-thumb sub pick'] a",
+                   "url_prefix":"https://www.thinkcontest.com/"})
+
+DEPTS = [usaint,disu,eco,cse,aix,disu_polaris,startup,infocom]

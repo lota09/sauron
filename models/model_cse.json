@@ -103,6 +103,24 @@
                             "td_subject"
                         ],
                         "style": "padding-left:0px"
+                    },
+                    0
+                ],
+                [
+                    "div",
+                    {
+                        "class": [
+                            "bo_tit"
+                        ],
+                        "style": ""
+                    },
+                    0
+                ],
+                [
+                    "a",
+                    {
+                        "style": "",
+                        "class": ""
                     }
                 ]
             ],

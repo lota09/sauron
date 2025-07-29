@@ -10,4 +10,4 @@ deprecated/
 *.bat
 *.tar
 
-models/test.json
+models/model_test.json
