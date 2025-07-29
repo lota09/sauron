@@ -61,6 +61,27 @@ def SendContentMessage(content):
     else:
         raise DiscordError(f"메시지 전송 실패: {response.status_code}, {response.text}")
 
+# 사용자 지정 임베드 메시지 전송함수
+def SendCustomMessage(embed, channel_id):
+    #메시지 구성요소
+
+    api_info = LoadSecrets(BOT_TOKEN_FILE)
+    bot_token=api_info['bot_token']
+
+    data = {"embeds": [embed]}
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json",
+    }
+
+    discord_api_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    response = requests.post(discord_api_url, headers=headers, data=json.dumps(data))
+    
+    if response.status_code == 200 or response.status_code == 201:
+        return response.json()
+    else:
+        raise DiscordError(f"메시지 전송 실패: {response.status_code}, {response.text}")
+
 
 # 디버깅 메시지 전송 함수
 def SendDebugMessage(content):
@@ -146,22 +167,39 @@ def SendEmbedMessage(notice_data):
 
 # 메시지 전송 실행
 if __name__ == "__main__":
-    components = \
-        {
-            'dept': '차세대반도체학과',
-            'dept_id': 'disu_bold',
-            'title': '차세대반도체학과 반도체 세미나 I Advanced Package 이해 I 2024. 11. 20. (수) I 반도체산업이해(특강)',
-            'date': '2024-11-18', 'url': 'https://www.disu.ac.kr/community/notice?md=v&bbsidx=7978',
-            'summary': '- 숭실대학교 차세대반도체학과에서 반도체 산업이해 오픈 특강을 진행함\n- 반도체 산업에서 패키지의 중요성에 대해 이해하는 시간이 되기를 바람'
-        }
 
     content = \
 """
-📜 Module: DiscordMsg.py, line 159
-🔧 Function: SendDebugMessage
-❌ Exception: ExampleError - Testing Debug Message itself
-Outdated Data :{'dept': '경제학과', 'title': '경제학과 성적 우수 백마 장학생 모집', 'url': 'https://eco.ssu.ac.kr/bbs/board.php?bo_table=notice&wr_id=46&page=1', 'latest': False, 'summary': ''}
+\u200b
+🛠️ 업데이트 내용
+- <@&1397154694635327538>의 공지 알림을 이제 받아보실 수 있습니다.
+- <@&1398016806802821140>의 공지 알림을 이제 받아보실 수 있습니다.
+- 새로운 공지 감지 알고리즘을 개선하였습니다. (기존 : 첫번째 항목 변화감지 → 개선 : 기존 목록과 차집합)
+\u200b
+💌 추가적인 안내말씀
+- 본 서비스에 초대하고 싶으신 분이 있으시다면, 편하게 초대하셔도 좋습니다.
+- 사우론의 눈 서비스에 관한 피드백은 상시 받고있으니 <@337458324926627841>에게 편하게 DM을 보내주시기 바랍니다.
+\u200b
+감사합니다.
+\u200b
+@everyone
 """
-    SendContentMessage("인간 세계의 끝이 도래했다.")
-    SendDebugMessage(content)
-    SendEmbedMessage(components)
+    channel_id = CHANNEL_ID_DEBUG
+    embed = {
+        "title": f"📢 사우론의 눈 주요 업데이트 노트",
+        "description": content,
+        "color": 0xfb8229,  # 사우론 오렌지
+        "fields": [
+            #{"name": "🔗 링크", "value": f"[▶자세히 보기]({url})\n\u200b\n@everyone", "inline": True},
+        ],
+        "footer": {
+            "text": "사우론의 눈" ,
+            "icon_url": ICON_DEBUG
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+    #SendContentMessage("인간 세계의 끝이 도래했다.")
+    #SendDebugMessage(content)
+    #SendEmbedMessage(components)
+    SendCustomMessage(embed,channel_id)
