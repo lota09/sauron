@@ -37,29 +37,31 @@ class NoticeData:
 
 def UpdateNotice(dept):
     dept_id = dept.dept_id
-    html = dept.build_htmlpage()
-
-    #url을 소스로 하는경우
-    if html is None:
-        source_args = {"url":dept.url}
-    #html을 소스로 하는경우
-    else:
-        source_args = {"html":html}
 
     # 그룹된 결과 가져오기
     model_id = dept_id.split('_')[0]
     scraper.load(f"models/model_{model_id}.json")
-    scraped_dict = scraper.get_result_similar(**source_args, group_by_alias=True)
 
+    # 페이지 1에 대한 소스 가져오기
+    source_args = dept.build_source(1)
+    scraped_dict = scraper.get_result_similar(**source_args, group_by_alias=True)
     titles = scraped_dict["title"]
     urls = scraped_dict["url"]
+
+    # 페이지 2에 대한 소스 가져오기
+    if "{{page}}" in dept.url:
+        source_args_p2 = dept.build_source(2)
+        scraped_dict_p2 = scraper.get_result_similar(**source_args_p2, group_by_alias=True)
+        urls_p2 = scraped_dict_p2["url"]
+    else:
+        urls_p2 = []
 
     # 크롤링한 데이터가 없는경우
     if not titles or not urls:
         raise FetchError("Fetch Failed, There's nothing to fetch")
 
     # 신규 항목 인덱스 구하기 (차집합)
-    new_indices = Update.UpdateState(dept_id, urls)
+    new_indices = Update.UpdateState(dept_id, urls, urls_p2)
     updated_count = len(new_indices)
 
     # 신규 항목이 너무 많은 경우

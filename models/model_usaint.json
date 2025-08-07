@@ -125,15 +125,11 @@
                             "notice-lists"
                         ],
                         "style": ""
-                    },
-                    2
+                    }
                 ],
                 [
                     "li",
                     {
-                        "class": [
-                            "start"
-                        ],
                         "style": ""
                     },
                     0
@@ -324,15 +320,11 @@
                             "notice-lists"
                         ],
                         "style": ""
-                    },
-                    2
+                    }
                 ],
                 [
                     "li",
                     {
-                        "class": [
-                            "start"
-                        ],
                         "style": ""
                     },
                     0

@@ -16,17 +16,10 @@ import DeptInfo
 
 scraper = AutoScraper()
 
-dept = DeptInfo.infocom
+dept = DeptInfo.usaint
 
 dept_id = dept.dept_id
-html = dept.build_htmlpage()
-
-#url을 소스로 하는경우
-if html is None:
-    source_args = {"url":dept.url}
-#html을 소스로 하는경우
-else:
-    source_args = {"html":html}
+source_args = dept.build_source(1)
 
 # 그룹된 결과 가져오기
 scraper.load(f"models/model_test.json")
