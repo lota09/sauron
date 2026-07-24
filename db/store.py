@@ -168,3 +168,27 @@ class Store:
             rows = self._con.execute(
                 "SELECT dept_id FROM subscriptions WHERE discord_user_id=?", (discord_user_id,)).fetchall()
         return [r["dept_id"] for r in rows]
+
+    def add_subscription(self, discord_user_id: str, dept_id: str):
+        with self._lock:
+            self.add_user(discord_user_id)
+            self._con.execute(
+                "INSERT OR IGNORE INTO subscriptions(discord_user_id, dept_id) VALUES (?,?)",
+                (discord_user_id, dept_id))
+            self._con.commit()
+
+    def remove_subscription(self, discord_user_id: str, dept_id: str):
+        with self._lock:
+            self._con.execute(
+                "DELETE FROM subscriptions WHERE discord_user_id=? AND dept_id=?",
+                (discord_user_id, dept_id))
+            self._con.commit()
+
+    def set_dept_discord(self, dept_id: str, channel_id: str = None, role_id: str = None):
+        """setup_guild가 생성한 채널/역할 ID를 depts에 기록."""
+        with self._lock:
+            if channel_id is not None:
+                self._con.execute("UPDATE depts SET discord_channel_id=? WHERE dept_id=?", (channel_id, dept_id))
+            if role_id is not None:
+                self._con.execute("UPDATE depts SET discord_role_id=? WHERE dept_id=?", (role_id, dept_id))
+            self._con.commit()

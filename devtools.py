@@ -14,7 +14,7 @@ debug_resummarize(c, n):
 import asyncio
 import random
 
-from pipeline import crawl_pass
+from pipeline import _process_new_item
 from summarize.worker import drain
 
 
@@ -37,28 +37,33 @@ async def debug_resummarize(c, n: int = 10):
         top = items[0]   # 목록 맨 위 = 최신
         await asyncio.to_thread(c.store.forget_url, dept["dept_id"], top["url"])
         label = f"{dept.get('name_ko') or ''}({dept['dept_id']})"
-        picked.append((label, top["url"], top["title"]))
+        picked.append((dept, label, top))
         c.log(f"[debug 대상] {label} :: {top['title'][:50]}")
 
     if not picked:
         c.log("[debug] 재요약 대상을 찾지 못함(크롤 실패/빈 목록).")
         return
 
-    c.log(f"[debug] {len(picked)}개 학과 최신공지 재감지 → 요약 시작")
-    await crawl_pass(c)
+    c.log(f"[debug] {len(picked)}개 학과만 처리 → 요약 시작 (전체 크롤 안 함)")
+    for dept, label, top in picked:
+        try:
+            await _process_new_item(c, dept, {"title": top["title"], "url": top["url"]})
+            await asyncio.to_thread(c.store.mark_seen, dept["dept_id"], [top["url"]])
+        except Exception as e:
+            c.log(f"[debug 처리 실패] {label}: {e}")
     await drain(c)
 
     # 결과 출력
     print("\n=== 재요약 결과 ===")
-    for label, url, title in picked:
-        row = await asyncio.to_thread(_find_notice_by_url, c.store, url)
+    for dept, label, top in picked:
+        row = await asyncio.to_thread(_find_notice_by_url, c.store, top["url"])
         if not row:
-            print(f"  [미처리] {label} :: {title[:40]}")
+            print(f"  [미처리] {label} :: {top['title'][:40]}")
             continue
         status = row["status"]
         engine = row["summary_engine"] or "-"
         summ = row["summary"] or ""
-        print(f"\n  ● {label} [{status}/{engine}] {title[:50]}")
+        print(f"\n  ● {label} [{status}/{engine}] {top['title'][:50]}")
         if summ:
             for ln in summ.splitlines():        # 불릿 줄바꿈 보존
                 print(f"    {ln}")

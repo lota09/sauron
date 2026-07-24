@@ -33,10 +33,11 @@ def _load_token():
 
 
 class Notifier:
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, debug=None, dry_run=None):
         self.token = _load_token()
         self.logger = logger
-        self.dry = config.DRY_RUN or not self.token
+        self.debug_mode = config.DEBUG_EN if debug is None else debug   # True: 가짜 개발채널로
+        self.dry = bool(dry_run) or not self.token   # 전송 안 함(--dryrun) 또는 토큰 없음
         self._fake = 0
 
     def _log(self, msg):
@@ -84,16 +85,18 @@ class Notifier:
         }
 
     def _resolve_channel(self, dept):
-        if config.DEBUG_EN:
-            return config.DISCORD_DEBUG_CHANNEL_ID, ""
+        if self.debug_mode:
+            # 개발용: 모든 학과 공지를 통합공지채널로 몰빵, @everyone 없음(개발채널 핑 방지)
+            return config.DEBUG_NOTICE_CHANNEL_ID, ""
         return dept.get("discord_channel_id"), "@everyone"
 
     # ── 공개 API ──────────────────────────────────────
     def send_new(self, notice, dept):
         channel_id, mention = self._resolve_channel(dept)
         if not channel_id:
-            # 채널 미배정(자동생성 전) → 감시채널로 폴백 + 무멘션
-            channel_id, mention = config.DISCORD_DEBUG_CHANNEL_ID, ""
+            # 채널 미배정(자동생성 전) → 개발/감시채널로 폴백 + 무멘션
+            channel_id = config.DEBUG_NOTICE_CHANNEL_ID if self.debug_mode else config.DISCORD_DEBUG_CHANNEL_ID
+            mention = ""
         res = self._post(channel_id, self._embed(notice, dept, mention))
         return channel_id, res["id"]
 
@@ -111,7 +114,8 @@ class Notifier:
             "footer": {"text": "사우론의 눈"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        channel = config.DEBUG_DEBUG_CHANNEL_ID if self.debug_mode else config.DISCORD_DEBUG_CHANNEL_ID
         try:
-            self._post(config.DISCORD_DEBUG_CHANNEL_ID, embed)
+            self._post(channel, embed)
         except Exception as e:
             self._log(f"[debug 전송 실패] {e}")

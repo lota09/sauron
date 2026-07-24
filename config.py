@@ -78,15 +78,15 @@ LLM_MIN_HANGUL_RATIO = float(_get("LLM_MIN_HANGUL_RATIO", "0.15"))  # 한글/(�
 # Gemma엔 system 턴이 없어 두 값을 하나의 user 메시지로 합쳐 보냄.
 LLM_SYSTEM_PROMPT = (
     "너는 대학 학사공지를 학생에게 전달하는 요약 비서다. "
-    "한국어로만, 개조식(불릿)으로 핵심만 전달한다. "
+    "한국어로만, 개조식(불릿)으로 대충 어떤 내용인지만 짧게 전달한다. "
     "거절·머리말·맺음말 없이 요약 본문만 출력한다."
 )
-LLM_USER_TEMPLATE = """다음 학사공지를 개조식으로 요약해줘.
-- 각 항목은 '- '로 시작하는 한 줄로 쓰고, 항목마다 줄바꿈할 것.
-- 문장은 '4학년 대상', '신청 가능'처럼 종결어미를 생략하거나 '~함', '~임', '~바람'처럼 간결한 개조식으로.
-- 내용이 적으면 3~5줄, 많으면 6~10줄로 (동적 길이).
-- 마감일·신청방법·대상·장소·주의사항이 있으면 반드시 포함.
-- 인사말·설명·머리말 없이 불릿 항목만 출력.
+LLM_USER_TEMPLATE = """다음 학사공지를 개조식 불릿으로 요약해줘.
+- 각 항목은 '- '로 시작하는 한 줄. 하위 불릿(들여쓰기)은 쓰지 말고 최상위 불릿만.
+- 문장은 '4학년 대상', '신청 가능'처럼 종결어미 생략 또는 '~함/~임/~바람'.
+- 분량은 공지 정보량에 따라 2줄에서 6줄 사이를 유지. 핵심만 추리고 세부 조건·목록을 전부 나열하지 말 것.
+- 마감일·대상·신청방법을 우선 포함. 장소·주의사항은 정말 중요할 때만.
+- 인사말·설명·머리말 없이 불릿만 출력.
 
 [제목]
 {title}
@@ -114,8 +114,36 @@ INFOCOM_RETRY = _get_int("INFOCOM_RETRY", 3)    # 학교서버 버그 F5 흉내 
 
 # ── 디스코드 ─────────────────────────────────────────
 DISCORD_TOKEN_FILE = _get("DISCORD_TOKEN_FILE", os.path.join(_HERE, "secrets", "discord-api-info.json"))
-DISCORD_DEBUG_CHANNEL_ID = _get("DISCORD_DEBUG_CHANNEL_ID", "1355610759777882162")  # sauron 감시채널
-DEBUG_EN = _get_bool("DEBUG_EN", False)  # True: 실제 채널 대신 감시채널로/또는 dry-run
-DRY_RUN = _get_bool("DRY_RUN", False)    # True: 디스코드 전송을 로그로 대체(토큰 불필요, 테스트용)
+DISCORD_DEBUG_CHANNEL_ID = _get("DISCORD_DEBUG_CHANNEL_ID", "1355610759777882162")  # 운영 감시채널
+# 길드(서버) ID도 debug/prod로 분기. DEBUG(또는 debug 플래그)=디버깅 서버, 아니면 실서비스 서버.
+DEBUG_GUILD_ID = _get("DEBUG_GUILD_ID", "1195291355258310696")   # 디버깅 서버
+PROD_GUILD_ID = _get("PROD_GUILD_ID", "")                         # 실서비스 서버(최종 검수 후 입력)
+DISCORD_CHANNEL_PREFIX = _get("DISCORD_CHANNEL_PREFIX", "")  # 학과 채널명 접두(선택)
+
+# DEBUG 모드: True면 실제 학과채널 대신 아래 '가짜 개발 채널'로 전송(개발 중 실서비스 방해 X).
+#   전송 라우팅 우선순위:  --dryrun(전송안함) > DEBUG_EN(가짜채널) > 실제 학과채널
+#   실행 시 '--debug'/'--prod'/'debug 명령'이 config.DEBUG_EN 을 확정(main.py). 이후 모두 이 단일 식별자를 봄.
+DEBUG_NOTICE_CHANNEL_ID = _get("DEBUG_NOTICE_CHANNEL_ID", "1530319308331155486")     # 통합공지(모든 학과 몰빵)
+DEBUG_SUBSCRIBE_CHANNEL_ID = _get("DEBUG_SUBSCRIBE_CHANNEL_ID", "1530318804968538195")  # 구독관리
+DEBUG_DEBUG_CHANNEL_ID = _get("DEBUG_DEBUG_CHANNEL_ID", "1355520933598859365")       # 디버그(개발용)
+# 디버그 모드 단일 식별자. 라우팅은 config가 아니라 '실행 플래그'로만 결정(안전).
+# 기본 True(가짜 개발채널). 오직 '--prod' 만 False(실채널). config.json은 이 값을 못 건드림.
+DEBUG_EN = True
+# dry-run(디스코드 전송 안 함)은 config가 아니라 '--dryrun' 플래그로만. 기본은 전송함.
 
 ICON_DEFAULT = _get("ICON_DEFAULT", "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg")
+
+
+def active_guild_id(debug=None):
+    """debug=True(또는 DEBUG_EN)면 디버깅 서버, 아니면 실서비스 서버 ID 반환."""
+    d = DEBUG_EN if debug is None else debug
+    return DEBUG_GUILD_ID if d else PROD_GUILD_ID
+
+
+def debug_from_argv(argv):
+    """스크립트용 debug 판정: --prod면 False, --debug면 True, 아니면 DEBUG_EN."""
+    if "--prod" in argv:
+        return False
+    if "--debug" in argv:
+        return True
+    return DEBUG_EN

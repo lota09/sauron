@@ -18,8 +18,7 @@ sys.path.insert(0, ROOT)
 FIX = os.path.join(ROOT, "tests", "fixtures")
 
 import config
-config.DRY_RUN = True          # 디스코드 전송 → 로그
-config.OCR_BACKEND = "none"
+config.OCR_BACKEND = "none"    # (전송은 토큰 없음 → 자동 dry)
 config.UPDATE_LIMIT = 5
 
 from db.store import Store
@@ -335,10 +334,65 @@ def test_refusal_precision():
     srv.shutdown()
 
 
+def test_debug_routing():
+    print("[test] DEBUG/DRYRUN 라우팅")
+    import main
+    check("redo 10(=debug 별칭)", main._parse_args(["m", "debug", "10"]) == ("redo", 10, False, False, False), "")
+    check("redo 10 --dryrun", main._parse_args(["m", "redo", "10", "--dryrun"]) == ("redo", 10, True, False, False), "")
+    check("run --debug", main._parse_args(["m", "run", "--debug"]) == ("run", None, False, True, False), "")
+    check("run --prod", main._parse_args(["m", "run", "--prod"]) == ("run", None, False, False, True), "")
+    n = Notifier(debug=True, dry_run=True)
+    ch, mention = n._resolve_channel({"discord_channel_id": "REAL"})
+    check("debug→통합공지채널·무멘션", ch == config.DEBUG_NOTICE_CHANNEL_ID and mention == "", ch)
+    n2 = Notifier(debug=False, dry_run=True)
+    ch2, m2 = n2._resolve_channel({"discord_channel_id": "REAL"})
+    check("실채널→dept채널·@everyone", ch2 == "REAL" and m2 == "@everyone", ch2)
+    check("guild: debug→디버깅서버", config.active_guild_id(True) == config.DEBUG_GUILD_ID, "")
+    check("guild: prod→실서비스서버", config.active_guild_id(False) == config.PROD_GUILD_ID, "")
+    check("debug_from_argv --prod", config.debug_from_argv(["m", "--prod"]) is False, "")
+    check("debug_from_argv --debug", config.debug_from_argv(["m", "--debug"]) is True, "")
+
+
+def test_subscribe_logic():
+    print("[test] 구독 로직 + DB")
+    from notify.subscribe_logic import group_by_college, dept_select_options, diff_for_subset
+    depts = [
+        {"dept_id": "cse", "name_ko": "컴퓨터학부", "college": "IT대학", "discord_role_id": "R1"},
+        {"dept_id": "sw", "name_ko": "소프트웨어학부", "college": "IT대학", "discord_role_id": "R2"},
+        {"dept_id": "eco", "name_ko": "경제학과", "college": "경제통상대학", "discord_role_id": "R3"},
+    ]
+    g = group_by_college(depts)
+    check("단과대 그룹핑", list(g) == ["IT대학", "경제통상대학"] and len(g["IT대학"]) == 2, str(list(g)))
+    opts, dropped = dept_select_options(g["IT대학"], subscribed_ids=["cse"])
+    check("현재 구독 기본선택", opts[0]["default"] is True and opts[1]["default"] is False, str(opts))
+    # 25 초과 잘림
+    many = [{"dept_id": f"d{i}", "name_ko": f"n{i}"} for i in range(30)]
+    _, dr = dept_select_options(many, [])
+    check("25 초과 잘림 보고", dr == 5, f"dropped={dr}")
+    # subset diff: IT대학에서 sw 선택, cse 해제
+    diff = diff_for_subset(["cse", "sw"], selected_ids=["sw"], current_ids=["cse", "eco"])
+    check("subset add/remove", diff == {"add": ["sw"], "remove": ["cse"]}, str(diff))
+    check("subset 밖(eco) 불변", "eco" not in diff["add"] + diff["remove"], "")
+
+    # DB 구독 메서드
+    store, path = temp_store([dict(dept_id="cse", name_ko="컴퓨터학부", list_url="http://x")])
+    store.add_subscription("U1", "cse")
+    check("구독 추가", store.user_subscriptions("U1") == ["cse"], "")
+    store.add_subscription("U1", "cse")  # 중복 무시
+    check("중복 무시", store.user_subscriptions("U1") == ["cse"], "")
+    store.remove_subscription("U1", "cse")
+    check("구독 해제", store.user_subscriptions("U1") == [], "")
+    store.set_dept_discord("cse", channel_id="C9", role_id="R9")
+    d = store.get_dept("cse")
+    check("채널/역할 ID 저장", d["discord_channel_id"] == "C9" and d["discord_role_id"] == "R9", "")
+    store.close(); os.remove(path)
+
+
 if __name__ == "__main__":
     for t in (test_fetcher_parse, test_diff_seed_new_limit, test_llm_client,
               test_run_once_e2e, test_debug_resummarize, test_model_autodetect,
-              test_refusal_precision, test_repetition_strip, test_language_issue):
+              test_refusal_precision, test_repetition_strip, test_language_issue,
+              test_subscribe_logic, test_debug_routing):
         try:
             t()
         except Exception as e:

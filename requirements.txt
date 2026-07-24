@@ -12,4 +12,8 @@ lxml>=5.0
 #   Pillow>=10.0
 #   numpy
 
+# ── 디스코드 구독 봇 (notify/discord_bot.py, setup_guild.py 실행 시) ──
+# discord.py>=2.3
+
 # 표준 asyncio 사용(aiohttp/openai/apscheduler 불필요). 요약 LLM은 OpenAI 호환 REST를 requests로 직접 호출.
+# 크롤/요약 파이프라인은 discord.py 없이도 동작(봇만 별도 프로세스).

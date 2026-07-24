@@ -22,7 +22,7 @@ from summarize.ocr import get_ocr
 from summarize.worker import worker_loop
 
 
-def build_components(logger=None):
+def build_components(logger=None, dry_run=None):
     logger = logger or setup_logger()
     store = Store(config.DB_PATH)
     summarizer = default_summarizer()
@@ -32,12 +32,15 @@ def build_components(logger=None):
         logger.info(f"[LLM] 사용 모델: {model} @ {config.LLM_BASE_URL}")
     except Exception as e:
         logger.info(f"[LLM] 모델 확인 실패({e}) → {summarizer.model}")
+    notifier = Notifier(logger, dry_run=dry_run)   # debug_mode 는 config.DEBUG_EN
+    logger.info(f"[전송] dry_run={notifier.dry} DEBUG_EN={notifier.debug_mode} "
+                f"({'가짜채널' if notifier.debug_mode else '실채널'})")
     return Components(
         store=store,
         fetcher=Fetcher(),
         ocr=get_ocr(),
         summarizer=summarizer,
-        notifier=Notifier(logger),
+        notifier=notifier,
         queue=WorkQueue(),
         clova=ClovaSummarizer(),
         logger=logger,
@@ -64,26 +67,39 @@ async def _run_forever(c):
 
 
 def _parse_args(argv):
-    """모드 + 정수 인자. 'debug 10' / '--debug 10' / 'debug' 모두 허용."""
-    args = [a for a in argv[1:]]
+    """모드(once/run/debug) + 정수 인자 + 플래그(dryrun/debug).
+    예: 'debug 10' / 'debug 10 --dryrun' / 'run --debug'."""
     mode = "run"
     num = None
-    for a in args:
-        s = a.lstrip("-")
-        if s in ("once", "run", "debug"):
-            mode = s
-        elif s.isdigit():
-            num = int(s)
-    return mode, num
+    dryrun_flag = False
+    debug_flag = False
+    prod_flag = False
+    for a in argv[1:]:
+        bare = a.lstrip("-").lower()
+        is_flag = a.startswith("-")
+        if not is_flag and bare in ("once", "run", "redo", "debug"):
+            mode = "redo" if bare == "debug" else bare   # 'debug'는 'redo' 별칭(호환)
+        elif bare.isdigit():
+            num = int(bare)
+        elif bare == "dryrun":
+            dryrun_flag = True
+        elif is_flag and bare == "debug":
+            debug_flag = True
+        elif is_flag and bare == "prod":
+            prod_flag = True
+    return mode, num, dryrun_flag, debug_flag, prod_flag
 
 
 def main():
-    mode, num = _parse_args(sys.argv)
-    c = build_components()
+    mode, num, dryrun_flag, debug_flag, prod_flag = _parse_args(sys.argv)
+    # 라우팅은 오직 플래그로: 기본 가짜채널(안전), --prod 만 실채널. config.json은 무시.
+    config.DEBUG_EN = not prod_flag
+    dry = dryrun_flag                   # dry-run 은 오직 --dryrun 플래그
+    c = build_components(dry_run=dry)
     try:
         if mode == "once":
             asyncio.run(run_once(c))
-        elif mode == "debug":
+        elif mode == "redo":
             from devtools import debug_resummarize
             asyncio.run(debug_resummarize(c, num or 10))
         else:
