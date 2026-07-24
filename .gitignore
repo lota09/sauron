@@ -1,13 +1,14 @@
+# 런타임 산출물(스크립트로 재생성 가능)
+db/notice.db
+db/notice.db-wal
+db/notice.db-shm
+
+# 비밀키 (단, *.example 은 커밋)
+secrets/*
+!secrets/*.example
+
+# 파이썬
 __pycache__/
-buffers/
-secrets
-dev/
-deprecated/
-
-.*/
-.*
-
-*.bat
-*.tar
-
-models/model_test.json
+*.pyc
+.venv/
+venv/
