@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>사우론 · Discord 임베드 스타일 갤러리</title>
+<style>
+  :root{
+    --bg:#313338; --bg2:#2b2d31; --card:#2b2d31; --embedbg:#2b2d31;
+    --text:#dbdee1; --muted:#949ba4; --link:#00a8fc; --white:#f2f3f5;
+    --ok:#23a55a; --warn:#f0b132; --red:#f23f43; --blurple:#5865f2;
+    --gold:#faa61a; --green:#3ba55d; --pink:#eb459e; --cyan:#1abc9c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#1e1f22;color:var(--text);
+    font-family:"gg sans","Noto Sans KR",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    line-height:1.4;padding:24px 16px 80px}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{color:var(--white);font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 28px}
+  .note{background:#111214;border-left:3px solid var(--blurple);padding:10px 14px;
+    border-radius:4px;font-size:13px;color:var(--muted);margin:0 0 28px}
+  .note code{color:#e6c07b;background:#1e1f22;padding:1px 5px;border-radius:3px;font-size:12px}
+  .caseh{color:var(--white);font-size:15px;font-weight:700;margin:34px 0 6px;
+    display:flex;align-items:center;gap:8px}
+  .casetag{font-size:11px;font-weight:600;color:#fff;background:var(--blurple);
+    padding:2px 8px;border-radius:10px}
+  .casedesc{color:var(--muted);font-size:12.5px;margin:0 0 12px}
+
+  /* discord message shell */
+  .msg{display:flex;gap:16px;background:var(--bg);padding:10px 14px;border-radius:8px}
+  .avatar{width:40px;height:40px;border-radius:50%;flex:0 0 40px;
+    background:linear-gradient(135deg,#5865f2,#2b2d31);display:flex;align-items:center;
+    justify-content:center;font-size:19px}
+  .body{flex:1;min-width:0}
+  .uname{color:var(--white);font-weight:600;font-size:15px}
+  .bot{background:var(--blurple);color:#fff;font-size:10px;font-weight:600;
+    padding:1px 5px;border-radius:4px;margin-left:6px;vertical-align:middle;text-transform:uppercase}
+  .ts{color:var(--muted);font-size:12px;margin-left:8px}
+
+  /* embed */
+  .embed{margin-top:6px;background:var(--embedbg);border-radius:4px;
+    border-left:4px solid var(--blurple);padding:12px 16px 14px;max-width:520px;
+    display:grid;grid-template-columns:1fr auto;gap:8px}
+  .embed .col{min-width:0}
+  .eauthor{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .eauthor img{width:24px;height:24px;border-radius:50%}
+  .eauthor .aico{width:20px;height:20px;border-radius:50%;background:#5865f2;
+    display:inline-flex;align-items:center;justify-content:center;font-size:11px}
+  .eauthor span{color:var(--white);font-size:13px;font-weight:600}
+  .etitle{color:var(--link);font-size:15px;font-weight:600;margin:2px 0 6px;cursor:pointer}
+  .etitle.plain{color:var(--white);cursor:default}
+  .edesc{font-size:14px;color:var(--text);white-space:pre-wrap;margin:0 0 6px}
+  .edesc b{color:var(--white)}
+  .fields{display:flex;flex-wrap:wrap;gap:10px 22px;margin:8px 0 2px}
+  .field{min-width:120px}
+  .field.full{flex-basis:100%}
+  .fname{color:var(--white);font-size:12.5px;font-weight:700;margin-bottom:2px}
+  .fval{color:var(--text);font-size:13.5px}
+  .efooter{display:flex;align-items:center;gap:8px;margin-top:10px;
+    color:var(--muted);font-size:12px}
+  .efooter .fico{width:16px;height:16px;border-radius:50%;background:#4e5058;
+    display:inline-flex;align-items:center;justify-content:center;font-size:10px}
+  .ethumb{width:64px;height:64px;border-radius:8px;background:#1e1f22;
+    display:flex;align-items:center;justify-content:center;font-size:26px;grid-row:span 3}
+  .eimage{grid-column:1/-1;margin-top:8px;height:120px;border-radius:6px;
+    background:linear-gradient(135deg,#4e5058,#2b2d31);display:flex;align-items:center;
+    justify-content:center;color:var(--muted);font-size:12px}
+  .codeblock{background:#1e1f22;border-radius:4px;padding:8px 10px;font-family:
+    "Consolas",monospace;font-size:12.5px;color:#c7cad1;white-space:pre-wrap;margin:6px 0}
+
+  /* interactive components row */
+  .components{display:flex;flex-direction:column;gap:8px;margin-top:8px;max-width:520px}
+  .select{background:#1e1f22;border:1px solid #232428;border-radius:4px;
+    padding:9px 12px;color:var(--muted);font-size:14px;display:flex;
+    justify-content:space-between;align-items:center;cursor:pointer;max-width:400px}
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap}
+  .btn{border:none;border-radius:4px;padding:8px 16px;font-size:14px;font-weight:500;
+    color:#fff;cursor:pointer;font-family:inherit}
+  .btn.primary{background:var(--blurple)}
+  .btn.success{background:var(--ok)}
+  .btn.secondary{background:#4e5058}
+  .btn.danger{background:var(--red)}
+  .eph{color:var(--muted);font-size:11px;margin-bottom:4px;display:flex;align-items:center;gap:5px}
+
+  /* color legend */
+  .legend{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
+  .chip{font-size:12px;padding:3px 10px;border-radius:12px;color:#111;font-weight:600}
+  .footer-tip{margin-top:40px;padding:14px 16px;background:#111214;border-radius:6px;
+    color:var(--muted);font-size:12.5px}
+  .footer-tip b{color:var(--white)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>사우론 · Discord 임베드 스타일 갤러리</h1>
+  <p class="sub">discord.py 2.x <code style="color:#e6c07b">discord.Embed</code> 로 실제 구현 가능한 스타일 모음 · 다크테마 목업</p>
+
+  <div class="note">
+    Discord 임베드 구성요소: <code>color</code>(왼쪽 색막대) · <code>author</code>(작은 아이콘+이름) ·
+    <code>title</code>+<code>url</code>(파란 링크) · <code>description</code> · <code>fields</code>(name/value, inline) ·
+    <code>thumbnail</code>(우상단 소형) · <code>image</code>(하단 대형) · <code>footer</code>(아이콘+텍스트) · <code>timestamp</code>.
+    아래는 공지 알림용 A~F, 구독봇 UI용 G~K, 운영/디버그용 L 예시.
+  </div>
+
+  <!-- ============ A. 미니멀 공지 ============ -->
+  <div class="caseh"><span class="casetag">A</span> 미니멀 공지 (가장 가벼움)</div>
+  <p class="casedesc">색막대 + 제목링크 + 요약 2~4줄 + 푸터(학과·시각)만. 정보 밀도 대비 시선 부담 최소. 대량 발송에 적합.</p>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘 오후 2:14</span>
+      <div class="embed" style="border-color:var(--red)">
+        <div class="col">
+          <div class="etitle">[학사] 2026-2학기 재학생 등록금 납부 안내</div>
+          <div class="edesc">- 납부기간: 8/18(월)~8/22(금)
+- 대상: 전체 재학생 (휴학생 제외)
+- 미납 시 자동 제적 처리되므로 기한 엄수 바람</div>
+          <div class="efooter"><span class="fico">🏛️</span> 학사공지 · scatch.ssu.ac.kr · 오후 2:14</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ B. 썸네일 + 필드 공지 ============ -->
+  <div class="caseh"><span class="casetag">B</span> 썸네일 + 핵심필드 공지 (권장 표준형)</div>
+  <p class="casedesc">우상단 학과 엠블럼 썸네일, 마감/대상/신청방법을 inline 필드로 3열. 정보를 훑기 쉽고 예쁨. 사우론 기본 추천.</p>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘 오후 3:02</span>
+      <div class="embed" style="border-color:var(--gold)">
+        <div class="col">
+          <div class="eauthor"><span class="aico">💰</span><span>장학공지</span></div>
+          <div class="etitle">2026 국가장학금 2차 신청 안내</div>
+          <div class="edesc">2학기 국가장학금 2차 신청 접수. 1차 미신청자·재신청자 대상.</div>
+          <div class="fields">
+            <div class="field"><div class="fname">📅 마감</div><div class="fval">8/29 18:00</div></div>
+            <div class="field"><div class="fname">🎓 대상</div><div class="fval">재학생 전원</div></div>
+            <div class="field"><div class="fname">📝 신청</div><div class="fval">한국장학재단</div></div>
+          </div>
+          <div class="efooter"><span class="fico">💰</span> 장학공지 · 오후 3:02</div>
+        </div>
+        <div class="ethumb">🎓</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ C. 카테고리 색상코딩 ============ -->
+  <div class="caseh"><span class="casetag">C</span> 카테고리 색상코딩 (한눈에 분류)</div>
+  <p class="casedesc">공지 종류별로 색막대를 달리해 채널 스크롤 시 색만으로 구분. 학사=빨강, 장학=금색, 채용=파랑, 행사=초록, 국제=청록 …</p>
+  <div class="legend">
+    <span class="chip" style="background:#f23f43">학사</span>
+    <span class="chip" style="background:#faa61a">장학</span>
+    <span class="chip" style="background:#5865f2;color:#fff">채용</span>
+    <span class="chip" style="background:#3ba55d">행사</span>
+    <span class="chip" style="background:#1abc9c">국제교류</span>
+    <span class="chip" style="background:#eb459e;color:#fff">봉사</span>
+    <span class="chip" style="background:#949ba4">기타</span>
+  </div>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘 오후 4:20</span>
+      <div class="embed" style="border-color:var(--blurple)">
+        <div class="col">
+          <div class="eauthor"><span class="aico">💼</span><span>채용공지</span></div>
+          <div class="etitle">[삼성전자] 2026 상반기 신입 채용 캠퍼스 리크루팅</div>
+          <div class="edesc">- 일시: 9/3(수) 14:00, 벤처중소기업센터 3층
+- 대상: 졸업예정자·기졸업자
+- 사전신청 선착순 100명</div>
+          <div class="efooter"><span class="fico">💼</span> 채용공지 · 오후 4:20</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ D. 긴급/마감임박 (author 강조) ============ -->
+  <div class="caseh"><span class="casetag">D</span> 긴급·마감임박 강조형</div>
+  <p class="casedesc">author 라인에 ⏰ 배지, 빨간 막대, 굵은 첫 줄로 긴급도 전달. D+1 재알림 등에 사용.</p>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘 오전 9:00</span>
+      <div class="embed" style="border-color:var(--red)">
+        <div class="col">
+          <div class="eauthor"><span class="aico" style="background:#f23f43">⏰</span><span style="color:#f23f43">마감 D-1</span></div>
+          <div class="etitle">현장실습(인턴십) 신청 오늘 마감</div>
+          <div class="edesc"><b>오늘 18:00 마감</b> · 아직 미신청자는 서둘러 제출 바람.
+- 제출처: 종합정보시스템 &gt; 현장실습</div>
+          <div class="efooter"><span class="fico">💻</span> IT대학 · 컴퓨터학부 · 오전 9:00</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ E. 다이제스트(여러 공지 묶음) ============ -->
+  <div class="caseh"><span class="casetag">E</span> 일일 다이제스트 (여러 공지 묶음)</div>
+  <p class="casedesc">하루치 신규 공지를 한 임베드에 필드로 모아 발송. 알림 폭주를 줄이고 싶을 때의 대안 발송 형태.</p>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘 오후 9:00</span>
+      <div class="embed" style="border-color:var(--cyan)">
+        <div class="col">
+          <div class="etitle plain">📬 오늘의 컴퓨터학부 공지 3건</div>
+          <div class="fields">
+            <div class="field full"><div class="fname">🔴 [학사] 계절학기 성적 정정 기간</div><div class="fval">7/24~7/26 · <span style="color:var(--link)">바로가기</span></div></div>
+            <div class="field full"><div class="fname">🟡 [장학] 교내 근로장학 2학기 모집</div><div class="fval">~8/10 · <span style="color:var(--link)">바로가기</span></div></div>
+            <div class="field full"><div class="fname">🟢 [행사] 오픈소스 해커톤 참가자 모집</div><div class="fval">8/15 · <span style="color:var(--link)">바로가기</span></div></div>
+          </div>
+          <div class="efooter"><span class="fico">💻</span> 컴퓨터학부 · 7월 23일</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ F. 이미지 포함(포스터) ============ -->
+  <div class="caseh"><span class="casetag">F</span> 포스터 이미지 포함형</div>
+  <p class="casedesc">공지에 포스터 이미지가 있으면 하단 대형 image로. OCR로 텍스트 뽑되 원본 포스터도 함께 보여줌.</p>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘 오후 1:30</span>
+      <div class="embed" style="border-color:var(--green)">
+        <div class="col">
+          <div class="etitle">2026 숭실 SW 페스티벌 개최 안내</div>
+          <div class="edesc">- 일시: 9/20(토) 10:00~17:00
+- 장소: 형남공학관 로비
+- 부스·경진대회·기업설명회 동시 진행</div>
+        </div>
+        <div class="eimage">🖼️ 포스터 원본 이미지</div>
+        <div class="col" style="grid-column:1/-1"><div class="efooter"><span class="fico">🎪</span> 행사공지 · 오후 1:30</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ G. 구독 진입 임베드 ============ -->
+  <div class="caseh"><span class="casetag">G</span> /구독 진입 화면 (안내 임베드 + 컴포넌트)</div>
+  <p class="casedesc">명령 실행 첫 화면. 안내 임베드 위에 단계 선택 컴포넌트. 전부 ephemeral(본인만 보임).</p>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘</span>
+      <div class="eph">👁️ 나만 볼 수 있어요 · 메시지 지우기</div>
+      <div class="embed" style="border-color:var(--blurple)">
+        <div class="col">
+          <div class="etitle plain">🔔 공지 구독 설정</div>
+          <div class="edesc">받고 싶은 공지를 골라주세요. 단계별로 진행됩니다.
+<b>① 공통</b>(학사·장학 등 전교 공지) → <b>② 전공</b>(학과) → <b>③ 기타</b></div>
+          <div class="fields">
+            <div class="field"><div class="fname">현재 구독</div><div class="fval">학사, 컴퓨터학부</div></div>
+            <div class="field"><div class="fname">받는 방식</div><div class="fval">역할 기반 채널</div></div>
+          </div>
+          <div class="efooter"><span class="fico">👁️</span> 언제든 /구독 으로 다시 변경 가능</div>
+        </div>
+      </div>
+      <div class="components">
+        <div class="select"><span>① 공통 공지 고르기</span><span>▾</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ H. 공통 다중선택 (한 화면) ============ -->
+  <div class="caseh"><span class="casetag">H</span> ① 공통 다중선택 (scatch 8종, 한 화면)</div>
+  <p class="casedesc">공통은 8개뿐이라 한 Select에 다 들어감. 학사는 default 체크로 강하게 유도. 25개 한계 안 걸림.</p>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘</span>
+      <div class="eph">👁️ 나만 볼 수 있어요</div>
+      <div class="embed" style="border-color:var(--red)">
+        <div class="col">
+          <div class="etitle plain">① 공통 공지 (전교 공통)</div>
+          <div class="edesc">학사는 기본 선택되어 있어요. 원하는 항목을 추가로 고르세요.</div>
+        </div>
+      </div>
+      <div class="components">
+        <div class="select"><span>학사 ✓, 장학 ✓ · 채용, 행사, 국제교류 …</span><span>▾</span></div>
+        <div class="btnrow">
+          <button class="btn secondary">← 이전</button>
+          <button class="btn primary">다음 (전공) →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ I. 전공: 단과대 → 학과 ============ -->
+  <div class="caseh"><span class="casetag">I</span> ② 전공 (단과대 → 학과, + 다른 단과대 담기)</div>
+  <p class="casedesc">전공만 2단계 유지. 핵심: "＋ 다른 단과대"로 되돌아가면 /구독 재실행 없이 여러 단과대 반복 선택 가능(각 선택은 즉시 DB 반영).</p>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘</span>
+      <div class="eph">👁️ 나만 볼 수 있어요</div>
+      <div class="embed" style="border-color:var(--blurple)">
+        <div class="col">
+          <div class="etitle plain">② 전공 · IT대학</div>
+          <div class="edesc">구독할 학과를 고르세요 (현재 구독은 미리 체크됨).</div>
+        </div>
+      </div>
+      <div class="components">
+        <div class="select"><span>컴퓨터학부 ✓ · 전자정보공학부, 글로벌미디어학부 …</span><span>▾</span></div>
+        <div class="btnrow">
+          <button class="btn secondary">← 단과대 다시</button>
+          <button class="btn primary">＋ 다른 단과대 담기</button>
+          <button class="btn success">다음 (기타) →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ J. 구독 완료 확인 ============ -->
+  <div class="caseh"><span class="casetag">J</span> 구독 반영 완료 확인 임베드</div>
+  <p class="casedesc">추가/해제 결과를 초록 임베드 + 필드로. 역할 미생성 학과는 ⚠️ 로 분리 표시.</p>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘</span>
+      <div class="eph">👁️ 나만 볼 수 있어요</div>
+      <div class="embed" style="border-color:var(--ok)">
+        <div class="col">
+          <div class="etitle plain">✅ 구독이 반영됐어요</div>
+          <div class="fields">
+            <div class="field"><div class="fname">＋ 구독 추가</div><div class="fval">장학, 컴퓨터학부</div></div>
+            <div class="field"><div class="fname">－ 구독 해제</div><div class="fval">행사</div></div>
+            <div class="field full"><div class="fname">📋 현재 전체</div><div class="fval">학사 · 장학 · 컴퓨터학부</div></div>
+          </div>
+          <div class="efooter"><span class="fico">👁️</span> 새 공지는 해당 채널에서 바로 받아요</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ K. 현재 구독 현황 ============ -->
+  <div class="caseh"><span class="casetag">K</span> 현재 구독 현황 조회 (/내구독)</div>
+  <p class="casedesc">단과대별로 그룹핑해 필드로 보여주는 조회 전용 임베드. 별도 /내구독 명령이나 진입 화면에 활용.</p>
+  <div class="msg">
+    <div class="avatar">👁️</div>
+    <div class="body">
+      <span class="uname">사우론의 눈<span class="bot">앱</span></span><span class="ts">오늘</span>
+      <div class="eph">👁️ 나만 볼 수 있어요</div>
+      <div class="embed" style="border-color:var(--cyan)">
+        <div class="col">
+          <div class="etitle plain">📋 내 구독 현황 (3개)</div>
+          <div class="fields">
+            <div class="field"><div class="fname">공통</div><div class="fval">학사, 장학</div></div>
+            <div class="field"><div class="fname">IT대학</div><div class="fval">컴퓨터학부</div></div>
+          </div>
+          <div class="efooter"><span class="fico">👁️</span> /구독 으로 변경</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ L. 운영/디버그 ============ -->
+  <div class="caseh"><span class="casetag">L</span> 운영·디버그 임베드 (감시채널)</div>
+  <p class="casedesc">런타임 에러·크롤 예외를 빨간 임베드 + 코드블록으로 감시채널에 전송. 사람이 읽기 좋은 debug() 강화판.</p>
+  <div class="msg">
+    <div class="avatar" style="background:linear-gradient(135deg,#f23f43,#2b2d31)">🛠️</div>
+    <div class="body">
+      <span class="uname">사우론 감시<span class="bot">앱</span></span><span class="ts">오늘 오전 3:11</span>
+      <div class="embed" style="border-color:var(--red)">
+        <div class="col">
+          <div class="etitle plain">⚠️ crawl_pass 예외 발생</div>
+          <div class="fields">
+            <div class="field"><div class="fname">학과</div><div class="fval">law (법학과)</div></div>
+            <div class="field"><div class="fname">유형</div><div class="fval">HTTP 404</div></div>
+            <div class="field"><div class="fname">모드</div><div class="fval">run · 가짜채널</div></div>
+          </div>
+          <div class="codeblock">Traceback (most recent call last):
+  File "crawl/fetcher.py", line 88, in fetch
+    resp.raise_for_status()
+requests.exceptions.HTTPError: 404</div>
+          <div class="efooter"><span class="fico">🛠️</span> DEBUG_EN=True · 오전 3:11</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-tip">
+    <b>구현 메모</b> — 위 전부 <code style="color:#e6c07b">discord.Embed(title=, url=, description=, color=)</code> +
+    <code style="color:#e6c07b">.add_field(name=, value=, inline=True)</code> +
+    <code style="color:#e6c07b">.set_author()/.set_thumbnail()/.set_footer()/.set_image()</code> 조합으로 가능.
+    색상은 <code style="color:#e6c07b">discord.Color</code> 또는 <code style="color:#e6c07b">0xFAA61A</code> 정수.
+    컴포넌트(Select·Button)는 임베드와 <b>같은 메시지</b>에 붙음. 필드 inline은 3개까지 한 줄.
+    사우론 기본 추천: 공지=<b>B</b>(썸네일+필드)+<b>C</b>(색상코딩), 구독봇=<b>G·H·I·J</b> 흐름.
+  </div>
+</div>
+</body>
+</html>

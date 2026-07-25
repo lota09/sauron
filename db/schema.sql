@@ -10,8 +10,11 @@ PRAGMA foreign_keys = ON;
 -- 학과 추가/수정 = 코드 배포 없이 이 테이블 행 편집
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS depts (
-  dept_id            TEXT PRIMARY KEY,      -- 안정 슬러그. 예: 'cse', 'eco', 'portal_haksa'
+  dept_id            TEXT PRIMARY KEY,      -- 안정 슬러그. 예: 'cse', 'eco', 'scatch_haksa'
   name_ko            TEXT NOT NULL,         -- 학과/카테고리 표시명
+  kind               TEXT NOT NULL DEFAULT 'major',
+                     -- 구독 분류(봇 3단계 기준). 'general'(전교공통) | 'major'(전공) | 'etc'(기타)
+                     --  general = scatch 포털 공통(학사·장학 등), major = 단과대 소속 학과, etc = 그 외
   college            TEXT,                  -- 단과대
   department         TEXT,                  -- 학부
   major              TEXT,                  -- 전공(있으면)
@@ -39,7 +42,7 @@ CREATE TABLE IF NOT EXISTS depts (
 --   URL 키라서 고정공지·순서꼬임을 자동 흡수 (BOLD 판별 불요)
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS seen_notices (
-  dept_id       TEXT NOT NULL REFERENCES depts(dept_id) ON DELETE CASCADE,
+  dept_id       TEXT NOT NULL REFERENCES depts(dept_id) ON DELETE CASCADE ON UPDATE CASCADE,
   url           TEXT NOT NULL,
   first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (dept_id, url)
@@ -52,7 +55,7 @@ CREATE TABLE IF NOT EXISTS seen_notices (
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS notices (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-  dept_id            TEXT NOT NULL REFERENCES depts(dept_id) ON DELETE CASCADE,
+  dept_id            TEXT NOT NULL REFERENCES depts(dept_id) ON DELETE CASCADE ON UPDATE CASCADE,
   title              TEXT NOT NULL,
   url                TEXT NOT NULL UNIQUE,
   content_raw        TEXT,                  -- 정제된 본문 HTML/텍스트
@@ -60,6 +63,7 @@ CREATE TABLE IF NOT EXISTS notices (
   ocr_text           TEXT,                  -- OCR 결과(있을 때)
   summary            TEXT,                  -- 요약 결과(있을 때)
   summary_engine     TEXT,                  -- 'gemma_e2b'|'gemma_e4b'|'clova'|NULL
+  fail_reason        TEXT,                  -- 실패/내용없음 사유(사후 분석용). 성공 시 NULL
   status             TEXT NOT NULL DEFAULT 'detected',
   discord_channel_id TEXT,                  -- 실제 발송된 채널
   discord_message_id TEXT,                  -- edit 대상 메시지
@@ -81,7 +85,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS subscriptions (
   discord_user_id TEXT NOT NULL REFERENCES users(discord_user_id) ON DELETE CASCADE,
-  dept_id         TEXT NOT NULL REFERENCES depts(dept_id) ON DELETE CASCADE,
+  dept_id         TEXT NOT NULL REFERENCES depts(dept_id) ON DELETE CASCADE ON UPDATE CASCADE,
   subscribed_at   TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (discord_user_id, dept_id)
 );
@@ -95,4 +99,4 @@ CREATE TABLE IF NOT EXISTS app_meta (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
-INSERT OR IGNORE INTO app_meta(key, value) VALUES ('schema_version', '1');
+INSERT OR IGNORE INTO app_meta(key, value) VALUES ('schema_version', '3');

@@ -1,17 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-notify/discord_bot.py — 구독 봇 (C안). discord.py 2.x.
+notify/discord_bot.py — 구독 봇 (C안, 임베드+3단계). discord.py 2.x.
 
-`/구독` → (1단계) 단과대 Select → (2단계) 그 단과대 학과 다중 Select(현재 구독분 기본선택)
- → 선택 확정 시 학과 역할 부여/회수 + subscriptions DB 갱신. 응답은 전부 ephemeral.
+`/구독` → ① 공통(scatch 전교공지, 한 화면) → ② 전공(단과대→학과, '다른 단과대'로 반복) → ③ 기타
+각 단계의 Select 선택은 즉시 역할 부여/회수 + subscriptions DB 반영(부분드롭 방지). 전부 ephemeral.
 
-Discord Select 25개 한계를 단과대 그룹핑으로 우회. 역할이 아직 없는 학과(role_id 없음)는 목록에서 제외.
+- kind('general'|'major'|'etc')로 단계를 나눠, 서로 다른 단과대 다전공도 /구독 한 번으로 처리.
+- 전공은 Discord Select 25개 한계를 단과대 그룹핑으로 우회. '← 다른 단과대'로 여러 단과대 반복 선택.
+- 임베드 스타일: 갤러리 H(공통)·I(전공)·J(완료)·K(현황). 색상으로 단계 구분.
+
 실행: python -m notify.discord_bot   (secrets/discord-api-info.json 의 bot_token 필요)
-권한: 봇에 Manage Roles + 대상 역할들보다 봇 역할이 상위. (members 인텐트는 슬래시 상호작용에선 불필요)
+권한: 봇에 Manage Roles + 대상 역할들보다 봇 역할이 상위.
 """
 import json
+import logging
 import os
 import sys
+from datetime import datetime, timezone
 
 import config
 from db.store import Store
@@ -23,6 +28,17 @@ try:
     _DISCORD = True
 except ImportError:
     _DISCORD = False
+
+log = logging.getLogger("sauron.bot")
+
+# 단계별 색상(임베드 왼쪽 막대)
+C_GENERAL = 0xF23F43   # 공통(학사 계열) 빨강
+C_MAJOR   = 0x5865F2   # 전공 블러플
+C_ETC     = 0x949BA4   # 기타 회색
+C_DONE    = 0x23A55A   # 완료 초록
+C_INFO    = 0x1ABC9C   # 현황 청록
+
+STEP_GENERAL, STEP_MAJOR, STEP_ETC = "general", "major", "etc"
 
 
 def _load_token():
@@ -36,76 +52,258 @@ def _load_token():
     return tok
 
 
+def _setup_logging():
+    if log.handlers:
+        return
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                                     "%H:%M:%S"))
+    log.addHandler(h)
+    log.setLevel(logging.INFO)
+
+
 if _DISCORD:
 
-    class DeptSelect(discord.ui.Select):
-        """한 단과대의 학과 다중선택."""
-        def __init__(self, store, college, depts, subscribed):
-            self.store = store
+    # ── 공통 유틸 ──────────────────────────────────────
+    def _name(d):
+        return d.get("name_ko") or d["dept_id"]
+
+    def _current_summary(store, uid):
+        """현재 구독을 kind별로 정리. 반환: {'general':[name], 'major':OrderedDict{col:[name]}, 'etc':[name]}"""
+        subs = set(store.user_subscriptions(uid))
+        out = {"general": [], "major": group_by_college([]).__class__(), "etc": []}
+        for d in store.active_depts():
+            if d["dept_id"] not in subs:
+                continue
+            k = d.get("kind") or "major"
+            if k == "major":
+                col = (d.get("college") or "기타").strip() or "기타"
+                out["major"].setdefault(col, []).append(_name(d))
+            elif k == "general":
+                out["general"].append(_name(d))
+            else:
+                out["etc"].append(_name(d))
+        return out
+
+    async def _apply_selection(interaction, store, subset_ids, selected_ids):
+        """subset 안에서 선택=구독/미선택=해제. 역할 부여·회수 + DB. 반환: (added, removed, failed)."""
+        uid = str(interaction.user.id)
+        current = store.user_subscriptions(uid)
+        diff = diff_for_subset(subset_ids, selected_ids, current)
+        guild = interaction.guild
+        added, removed, failed = [], [], []
+        for dept_id in diff["add"]:
+            d = store.get_dept(dept_id)
+            role = guild.get_role(int(d["discord_role_id"])) if d and d.get("discord_role_id") else None
+            try:
+                if role:
+                    await interaction.user.add_roles(role, reason="공지 구독")
+                store.add_subscription(uid, dept_id)
+                added.append(_name(d) if d else dept_id)
+                log.info("구독+ uid=%s dept=%s", uid, dept_id)
+            except discord.Forbidden:
+                failed.append(_name(d) if d else dept_id)
+                log.warning("역할부여 실패(권한) uid=%s dept=%s role=%s", uid, dept_id, d.get("discord_role_id"))
+        for dept_id in diff["remove"]:
+            d = store.get_dept(dept_id)
+            role = guild.get_role(int(d["discord_role_id"])) if d and d.get("discord_role_id") else None
+            try:
+                if role:
+                    await interaction.user.remove_roles(role, reason="구독 해제")
+            except discord.Forbidden:
+                log.warning("역할회수 실패(권한) uid=%s dept=%s", uid, dept_id)
+            store.remove_subscription(uid, dept_id)
+            removed.append(_name(d) if d else dept_id)
+            log.info("구독- uid=%s dept=%s", uid, dept_id)
+        return added, removed, failed
+
+    def _saved_note(store, uid, failed):
+        # 변경사항(+/-) 대신 '현재 전체 개수'로 표시(우리 DB 기준, 외부 역할 조회 불필요).
+        n = len(store.user_subscriptions(uid))
+        line = f"현재 {n}개 구독 중"
+        if failed:
+            line += f"\n⚠️ 역할 권한 부족(봇 역할 위치 확인): {', '.join(failed)}"
+        return line
+
+    # ── Select 컴포넌트 ────────────────────────────────
+    class DeptMultiSelect(discord.ui.Select):
+        """한 묶음(공통/한 단과대/기타)의 학과 다중선택. 선택 즉시 저장 후 같은 단계 재렌더."""
+        def __init__(self, store, depts, subscribed, placeholder, step, college=None):
+            self.store, self.step, self.college = store, step, college
             self.dept_ids = [d["dept_id"] for d in depts]
-            opts, dropped = dept_select_options(depts, subscribed)
-            options = [discord.SelectOption(label=o["label"], value=o["value"], default=o["default"]) for o in opts]
-            super().__init__(placeholder=f"{college} 학과 선택(복수 가능)",
-                             min_values=0, max_values=len(options), options=options)
+            opts, _ = dept_select_options(depts, subscribed)
+            options = [discord.SelectOption(label=o["label"], value=o["value"], default=o["default"])
+                       for o in opts]
+            super().__init__(placeholder=placeholder, min_values=0,
+                             max_values=len(options), options=options)
 
         async def callback(self, interaction: discord.Interaction):
             uid = str(interaction.user.id)
-            current = self.store.user_subscriptions(uid)
-            diff = diff_for_subset(self.dept_ids, self.values, current)
-            guild = interaction.guild
-            done_add, done_rm, missing = [], [], []
-            for dept_id in diff["add"]:
-                d = self.store.get_dept(dept_id)
-                role = guild.get_role(int(d["discord_role_id"])) if d and d.get("discord_role_id") else None
-                if role:
-                    await interaction.user.add_roles(role, reason="구독")
-                    self.store.add_subscription(uid, dept_id)
-                    done_add.append(d.get("name_ko") or dept_id)
-                else:
-                    missing.append(dept_id)
-            for dept_id in diff["remove"]:
-                d = self.store.get_dept(dept_id)
-                role = guild.get_role(int(d["discord_role_id"])) if d and d.get("discord_role_id") else None
-                if role:
-                    await interaction.user.remove_roles(role, reason="구독 해제")
-                self.store.remove_subscription(uid, dept_id)
-                done_rm.append((d.get("name_ko") if d else dept_id) or dept_id)
-            msg = "✅ 구독 반영됨"
-            if done_add:
-                msg += f"\n＋ 구독: {', '.join(done_add)}"
-            if done_rm:
-                msg += f"\n－ 해제: {', '.join(done_rm)}"
-            if not done_add and not done_rm:
-                msg = "변경 사항이 없어요."
-            if missing:
-                msg += f"\n⚠️ 역할 미생성 학과 제외: {', '.join(missing)}"
-            await interaction.response.edit_message(content=msg, view=None)
-
-    class DeptView(discord.ui.View):
-        def __init__(self, store, college, depts, subscribed):
-            super().__init__(timeout=180)
-            self.add_item(DeptSelect(store, college, depts, subscribed))
+            _, _, failed = await _apply_selection(interaction, self.store, self.dept_ids, self.values)
+            note = _saved_note(self.store, uid, failed)
+            log.info("단계=%s 저장 uid=%s :: %s", self.step, interaction.user.id, note.replace("\n", " / "))
+            # 같은 단계 재렌더(체크 반영) + 저장 결과 표시
+            if self.step == STEP_GENERAL:
+                embed, view = _render_general(self.store, str(interaction.user.id), note)
+            elif self.step == STEP_ETC:
+                embed, view = _render_etc(self.store, str(interaction.user.id), note)
+            else:  # major dept
+                embed, view = _render_major_dept(self.store, str(interaction.user.id), self.college, note)
+            await interaction.response.edit_message(embed=embed, view=view)
 
     class CollegeSelect(discord.ui.Select):
-        def __init__(self, store, groups, subscribed, uid):
-            self.store, self.groups, self.subscribed = store, groups, subscribed
-            options = [discord.SelectOption(label=col[:100], value=col) for col in list(groups)[:25]]
+        def __init__(self, store, colleges):
+            self.store = store
+            options = [discord.SelectOption(label=c[:100], value=c) for c in colleges[:25]]
             super().__init__(placeholder="단과대를 고르세요", min_values=1, max_values=1, options=options)
 
         async def callback(self, interaction: discord.Interaction):
             college = self.values[0]
-            depts = self.groups[college]
-            current = self.store.user_subscriptions(str(interaction.user.id))
-            await interaction.response.edit_message(
-                content=f"**{college}** 에서 구독할 학과를 고르세요(현재 구독은 미리 선택됨):",
-                view=DeptView(self.store, college, depts, current))
+            log.info("전공 단과대선택 uid=%s college=%s", interaction.user.id, college)
+            embed, view = _render_major_dept(self.store, str(interaction.user.id), college)
+            await interaction.response.edit_message(embed=embed, view=view)
 
-    class CollegeView(discord.ui.View):
-        def __init__(self, store, groups, subscribed, uid):
-            super().__init__(timeout=180)
-            self.add_item(CollegeSelect(store, groups, subscribed, uid))
+    # ── 단계 네비 버튼 ─────────────────────────────────
+    class NavButton(discord.ui.Button):
+        def __init__(self, label, target, store, style=discord.ButtonStyle.secondary, college=None):
+            super().__init__(label=label, style=style)
+            self.target, self.store, self.college = target, store, college
 
+        async def callback(self, interaction: discord.Interaction):
+            uid = str(interaction.user.id)
+            log.info("네비 uid=%s → %s", interaction.user.id, self.target)
+            if self.target == "general":
+                embed, view = _render_general(self.store, uid)
+            elif self.target == "major_college":
+                embed, view = _render_major_college(self.store, uid)
+            elif self.target == "etc":
+                embed, view = _render_etc(self.store, uid)
+            else:  # done
+                embed, view = _render_done(self.store, uid)
+            await interaction.response.edit_message(embed=embed, view=view)
+
+    # ── 단계별 (embed, view) 렌더 ──────────────────────
+    def _render_general(store, uid, note=None):
+        depts = store.depts_by_kind(STEP_GENERAL, with_role=True)
+        subs = store.user_subscriptions(uid)
+        desc = ("전교 공통 · 학사·장학·채용 등\n**학사 구독 권장** · 항목 선택 후 **다음**"
+                if depts else "준비된 공통 채널 없음 (관리자 `setup_guild` 필요)")
+        if note:
+            desc += f"\n\n✅ {note}"
+        embed = discord.Embed(title="① 공통 공지", description=desc, color=C_GENERAL)
+        embed.set_footer(text="1/3 · 버튼으로 언제든 재변경")
+        view = discord.ui.View(timeout=180)
+        if depts:
+            view.add_item(DeptMultiSelect(store, depts, subs, "공통 공지 고르기(복수 가능)", STEP_GENERAL))
+        view.add_item(NavButton("다음 (전공) →", "major_college", store, discord.ButtonStyle.primary))
+        return embed, view
+
+    def _render_major_college(store, uid):
+        depts = store.depts_by_kind(STEP_MAJOR, with_role=True)
+        colleges = list(group_by_college(depts).keys())
+        desc = ("**단과대 선택** → 학과 선택\n여러 단과대는 **← 다른 단과대**로 반복"
+                if colleges else "준비된 전공 채널 없음")
+        embed = discord.Embed(title="② 전공 · 단과대", description=desc, color=C_MAJOR)
+        embed.set_footer(text="2/3")
+        view = discord.ui.View(timeout=180)
+        if colleges:
+            view.add_item(CollegeSelect(store, colleges))
+        view.add_item(NavButton("← 이전 (공통)", "general", store))
+        view.add_item(NavButton("건너뛰기 (기타) →", "etc", store, discord.ButtonStyle.primary))
+        return embed, view
+
+    def _render_major_dept(store, uid, college, note=None):
+        allmajor = store.depts_by_kind(STEP_MAJOR, with_role=True)
+        depts = group_by_college(allmajor).get(college, [])
+        subs = store.user_subscriptions(uid)
+        desc = f"**{college}** · 학과 선택 (현재 구독 미리 체크)"
+        if note:
+            desc += f"\n\n✅ {note}"
+        embed = discord.Embed(title=f"② 전공 · {college}", description=desc, color=C_MAJOR)
+        embed.set_footer(text="2/3 · ← 다른 단과대 반복 가능")
+        view = discord.ui.View(timeout=180)
+        if depts:
+            view.add_item(DeptMultiSelect(store, depts, subs, f"{college} 학과 선택(복수 가능)",
+                                          STEP_MAJOR, college=college))
+        view.add_item(NavButton("← 다른 단과대", "major_college", store))
+        view.add_item(NavButton("다음 (기타) →", "etc", store, discord.ButtonStyle.primary))
+        return embed, view
+
+    def _render_etc(store, uid, note=None):
+        depts = store.depts_by_kind(STEP_ETC, with_role=True)
+        subs = store.user_subscriptions(uid)
+        desc = "창업 등 기타 공지 · 필요 시 선택" if depts else "기타 항목 없음 · 바로 완료 가능"
+        if note:
+            desc += f"\n\n✅ {note}"
+        embed = discord.Embed(title="③ 기타 공지", description=desc, color=C_ETC)
+        embed.set_footer(text="3/3")
+        view = discord.ui.View(timeout=180)
+        if depts:
+            view.add_item(DeptMultiSelect(store, depts, subs, "기타 공지 고르기", STEP_ETC))
+        view.add_item(NavButton("← 이전 (전공)", "major_college", store))
+        view.add_item(NavButton("완료 ✓", "done", store, discord.ButtonStyle.success))
+        return embed, view
+
+    def _render_done(store, uid):
+        s = _current_summary(store, uid)
+        major_names = [n for names in s["major"].values() for n in names]  # 단과대 그룹 무시, name_ko 평면화
+        total = len(s["general"]) + len(major_names) + len(s["etc"])
+        lines = []
+        if s["general"]:
+            lines.append("- **공통**")
+            lines += [f"  - {n}" for n in s["general"]]
+        if major_names:
+            lines.append("- **학과별 공지**")
+            lines += [f"  - {n}" for n in major_names]
+        if s["etc"]:
+            lines.append("- **기타**")
+            lines += [f"  - {n}" for n in s["etc"]]
+        body = f"현재 **{total}개** 구독 중"
+        body += ("\n" + "\n".join(lines)) if lines else "\n구독한 항목 없음 · 버튼으로 다시 선택 가능"
+        embed = discord.Embed(title="✅ 구독 완료", color=C_DONE, description=body)
+        view = discord.ui.View(timeout=180)
+        view.add_item(NavButton("구독 다시 편집", "general", store, discord.ButtonStyle.secondary))
+        return embed, view
+
+    # ── 진입(공개 버튼 A) ──────────────────────────────
+    async def _open_flow(interaction, store):
+        """/구독 및 공개 버튼의 공통 진입: 구독 가능 항목 확인 후 ①공통 단계를 ephemeral로 연다."""
+        log.info("구독 진입 uid=%s(%s)", interaction.user.id, interaction.user)
+        any_role = any(store.depts_by_kind(k, with_role=True) for k in (STEP_GENERAL, STEP_MAJOR, STEP_ETC))
+        if not any_role:
+            await interaction.response.send_message(
+                "아직 구독 가능한 항목(역할)이 없어요. 관리자가 `setup_guild` 를 먼저 실행해야 합니다.", ephemeral=True)
+            return
+        embed, view = _render_general(store, str(interaction.user.id))
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    def _entry_embed():
+        """공개 채널에 상주하는 안내 임베드 A(간결·마크다운). 사용자는 버튼만 누르면 됨."""
+        e = discord.Embed(
+            title="🔔 공지 구독",
+            description=("아래 **버튼**을 눌러 받고 싶은 공지 선택\n"
+                         "· **공통** — 학사·장학·채용 등 전교 공지\n"
+                         "· **전공** — 내 학과\n"
+                         "· **기타** — 창업 등\n\n"
+                         "구독하면 해당 **전용 채널**로 새 공지 자동 전달\n\n"
+                         "> 버튼은 여러 번 눌러 언제든 변경 가능"),
+            color=C_GENERAL)
+        return e
+
+    class SubscribeEntryView(discord.ui.View):
+        """공개 채널 상주용 영구 View(timeout=None). 버튼 custom_id로 재시작 후에도 동작."""
+        def __init__(self, store):
+            super().__init__(timeout=None)
+            self.store = store
+
+        @discord.ui.button(label="공지 구독하기 🔔", style=discord.ButtonStyle.primary,
+                           custom_id="sauron:sub:open")
+        async def open_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await _open_flow(interaction, self.store)
+
+    # ── 봇 실행 ────────────────────────────────────────
     def run_bot():
+        _setup_logging()
         store = Store(config.DB_PATH)
         debug = config.debug_from_argv(sys.argv)
         gid = config.active_guild_id(debug)
@@ -114,25 +312,41 @@ if _DISCORD:
         tree = app_commands.CommandTree(client)
         guild_obj = discord.Object(id=int(gid)) if gid else None
 
+        # 재시작 후에도 공개 버튼이 동작하도록 영구 View 등록(custom_id 기반)
+        client.add_view(SubscribeEntryView(store))
+
         @client.event
         async def on_ready():
             await (tree.sync(guild=guild_obj) if guild_obj else tree.sync())
-            print(f"[bot] 로그인: {client.user} | {'디버깅' if debug else '실서비스'} 서버({gid or '전역'})")
+            log.info("로그인: %s | %s 서버(%s)", client.user,
+                     "디버깅" if debug else "실서비스", gid or "전역")
+            n = {k: len(store.depts_by_kind(k, with_role=True)) for k in (STEP_GENERAL, STEP_MAJOR, STEP_ETC)}
+            log.info("구독가능(역할보유) 학과: 공통 %d · 전공 %d · 기타 %d", n["general"], n["major"], n["etc"])
 
-        @tree.command(name="구독", description="학과 공지 구독을 설정합니다", guild=guild_obj)
+        @tree.command(name="구독", description="학과·공통 공지 구독을 설정합니다", guild=guild_obj)
         async def subscribe(interaction: discord.Interaction):
-            depts = [d for d in store.active_depts() if d.get("discord_role_id")]
-            if not depts:
-                await interaction.response.send_message(
-                    "아직 구독 가능한 학과(역할)가 없어요. 관리자가 setup_guild를 먼저 실행해야 합니다.", ephemeral=True)
-                return
-            groups = group_by_college(depts)
-            current = store.user_subscriptions(str(interaction.user.id))
-            await interaction.response.send_message(
-                "구독할 단과대를 고르세요:", view=CollegeView(store, groups, current, interaction.user.id),
-                ephemeral=True)
+            await _open_flow(interaction, store)
 
-        client.run(_load_token())
+        @tree.command(name="구독버튼생성", description="[관리자] 이 채널에 '공지 구독' 안내+버튼을 올립니다",
+                      guild=guild_obj)
+        @app_commands.default_permissions(manage_guild=True)   # 관리자/서버관리 권한자만 노출
+        async def make_entry(interaction: discord.Interaction):
+            log.info("/구독버튼생성 by uid=%s ch=%s", interaction.user.id, interaction.channel_id)
+            await interaction.channel.send(embed=_entry_embed(), view=SubscribeEntryView(store))
+            await interaction.response.send_message("이 채널에 구독 버튼을 올렸어요.", ephemeral=True)
+
+        @tree.error
+        async def on_app_error(interaction: discord.Interaction, error):
+            log.exception("슬래시 명령 오류: %s", error)
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send("처리 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요.", ephemeral=True)
+                else:
+                    await interaction.response.send_message("처리 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요.", ephemeral=True)
+            except Exception:
+                pass
+
+        client.run(_load_token(), log_handler=None)  # 우리 로거 사용
 
 
 def main():

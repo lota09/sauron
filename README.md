@@ -20,7 +20,9 @@ cp secrets/discord-api-info.json.example secrets/discord-api-info.json  # 봇 �
 ## 실행
 
 ```bash
-python init/seed_db.py     # 1) DB 스키마 + 64개 학과 시드 (idempotent)
+python init/seed_db.py     # 1) DB 스키마(v2) + 64개 학과 시드 (idempotent)
+# 기존 v1 DB가 있으면(운영 데이터 보존) 먼저 이관:
+python db/migrate_v2.py    #    kind 컬럼 + FK ON UPDATE CASCADE + portal→scatch_* 개명 (멱등)
 python main.py once        # 2) 부팅 재적재 + 1회 크롤 + 요약 드레인 (수동/테스트)
 python main.py run         # 3) 상시: 워커 + 10분 스케줄 루프 (기본 라우팅=가짜채널)
 python main.py run --prod  #    운영: 실제 학과채널로 전송
@@ -117,9 +119,11 @@ python -m notify.discord_bot           # 구독 봇 상주(게이트웨이)
 ```
 
 - `setup_guild.py` — 학과별 **역할 + 비공개 채널**(단과대 카테고리 아래, 역할 보유자만 열람) 생성. idempotent.
-- `discord_bot.py` — `/구독` → 단과대 Select → 학과 다중 Select(현재 구독 기본선택) → **역할 부여/회수 + DB 기록**. 전부 ephemeral. Select 25개 한계는 단과대 그룹핑으로 우회.
+- `discord_bot.py` — `/구독` → **3단계**(kind 기준): ① **공통**(scatch 전교공지, 한 화면·학사 강조) → ② **전공**(단과대→학과, `← 다른 단과대`로 여러 단과대 반복) → ③ **기타**. 각 Select 선택은 **즉시** 역할 부여/회수 + DB 반영(부분드롭 방지). 완료 시 현황 임베드. 전부 ephemeral.
+  - 다전공·공통 동시 구독을 /구독 **한 번**으로 처리(단계 분리 + 루프백 버튼). 임베드 스타일은 `docs/embed_gallery.html` H·I·J·K.
+- `kind`(general/major/etc)는 `depts` 컬럼이 단일 기준(프리픽스 규칙 의존 X). general=scatch 포털 8종, major=단과대 소속, etc=그 외.
 - 봇 권한: **Manage Roles / Manage Channels**, 봇 역할이 학과 역할들보다 상위여야 함.
-- 순수 로직(`subscribe_logic.py`)은 오프라인 테스트됨. 게이트웨이 동작은 토큰으로 기기에서.
+- 순수 로직(`subscribe_logic.py`)은 오프라인 테스트됨. 게이트웨이 동작은 토큰으로 기기에서. 봇은 `logging`으로 로그인·명령·역할부여·오류를 출력.
 
 ## 다음 단계 (예정)
 

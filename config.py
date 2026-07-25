@@ -69,6 +69,15 @@ LLM_MAX_TOKENS = _get_int("LLM_MAX_TOKENS", 2048)      # 출력 상한. 잘리�
 LLM_TEMPERATURE = _get("LLM_TEMPERATURE", "")          # 빈값=미전송(Gemma/litertlm 호환)
 LLM_FREQUENCY_PENALTY = _get("LLM_FREQUENCY_PENALTY", "")  # ⚠ OlliteRT는 무시함(temperature/top_k/top_p/max_tokens만 반영). 타 백엔드용 훅. 반복은 strip_degenerate로 잡음.
 
+# ── 요약 재시도 정책(공지 1건 기준) ──────────────────
+#  · 재시도 한도는 공지당 LLM_RETRY_LIMIT회(기본 1). 이를 소진하면 영구 실패(재크롤/재부팅에도 재시도 X).
+#  · 모델명 오류: LLM_MODEL_FALLBACK으로 교체 재시도(한도 미차감). 폴백 없으면 그냥 실패.
+#  · 연결/타임아웃(서버 무응답): LLM_RETRY_WAIT_SEC초 대기 후 재시도(한도 차감).
+#  · 언어이탈/불량응답(검증 실패): 즉시 재시도(한도 차감). greedy=결정론이라 '같은 모델 재시도=동일 실패'이므로
+#      폴백 모델이 있으면 폴백으로, 없으면 프롬프트를 한국어 강화로 변형해 재시도(입력을 바꿔야 결과가 바뀜).
+LLM_RETRY_LIMIT = _get_int("LLM_RETRY_LIMIT", 1)
+LLM_RETRY_WAIT_SEC = _get_int("LLM_RETRY_WAIT_SEC", 5)   # 연결 실패 시 재시도 전 대기(초)
+
 # 언어 이탈 검사(결정론) — 2B judge가 못 잡는 외국어 혼입/붕괴를 코드로 차단.
 LLM_ENFORCE_KOREAN = _get_bool("LLM_ENFORCE_KOREAN", True)
 LLM_MAX_HAN = _get_int("LLM_MAX_HAN", 5)                    # 한자(CJK) 이보다 많으면 중국어 주입 의심
@@ -123,9 +132,9 @@ DISCORD_CHANNEL_PREFIX = _get("DISCORD_CHANNEL_PREFIX", "")  # 학과 채널명 
 # DEBUG 모드: True면 실제 학과채널 대신 아래 '가짜 개발 채널'로 전송(개발 중 실서비스 방해 X).
 #   전송 라우팅 우선순위:  --dryrun(전송안함) > DEBUG_EN(가짜채널) > 실제 학과채널
 #   실행 시 '--debug'/'--prod'/'debug 명령'이 config.DEBUG_EN 을 확정(main.py). 이후 모두 이 단일 식별자를 봄.
-DEBUG_NOTICE_CHANNEL_ID = _get("DEBUG_NOTICE_CHANNEL_ID", "1530319308331155486")     # 통합공지(모든 학과 몰빵)
-DEBUG_SUBSCRIBE_CHANNEL_ID = _get("DEBUG_SUBSCRIBE_CHANNEL_ID", "1530318804968538195")  # 구독관리
-DEBUG_DEBUG_CHANNEL_ID = _get("DEBUG_DEBUG_CHANNEL_ID", "1355520933598859365")       # 디버그(개발용)
+DEBUG_NOTICE_CHANNEL_ID = _get("DEBUG_NOTICE_CHANNEL_ID", "1530567154473373837")     # 통합공지(모든 학과 몰빵)
+DEBUG_SUBSCRIBE_CHANNEL_ID = _get("DEBUG_SUBSCRIBE_CHANNEL_ID", "1530566820598386779")  # 구독관리
+DEBUG_DEBUG_CHANNEL_ID = _get("DEBUG_DEBUG_CHANNEL_ID", "1530566884121116783")       # 디버그(개발용)
 # 디버그 모드 단일 식별자. 라우팅은 config가 아니라 '실행 플래그'로만 결정(안전).
 # 기본 True(가짜 개발채널). 오직 '--prod' 만 False(실채널). config.json은 이 값을 못 건드림.
 DEBUG_EN = True

@@ -44,7 +44,49 @@ REFUSAL_PATTERNS = [
 
 
 class SummaryError(Exception):
-    pass
+    """요약 실패 기저 예외. reason으로 사유 분류(디버그/재시도 정책용)."""
+    reason = "generic"
+
+
+class EmptyContentError(SummaryError):
+    """본문+OCR 모두 비어 요약할 내용이 없음(#3). LLM 호출 안 함 → 재시도 안 함."""
+    reason = "empty"
+
+
+class ModelNotFoundError(SummaryError):
+    """서버는 응답하나 모델명이 불일치(HTTP 400/404 + 'model'). 폴백 모델로 교체 재시도."""
+    reason = "model"
+
+
+class ConnectionErrorLLM(SummaryError):
+    """연결/타임아웃/서버 무응답. 대기 후 재시도(환경적이라 같은 요청도 의미 있음)."""
+    reason = "connection"
+
+
+class ValidationErrorLLM(SummaryError):
+    """언어이탈/거절/과소길이/반복붕괴. greedy=결정론이라 재시도는 입력을 바꿔야 함(폴백/프롬프트변형)."""
+    reason = "validation"
+
+
+class ServerError(SummaryError):
+    """서버 응답O·모델명OK인데 실패(HTTP 5xx / 빈 스트림 / 파싱실패 등). 'LLM 재시작'으로 풀릴 여지."""
+    reason = "server"
+
+
+def _classify_http(status, body):
+    b = (body or "").lower()
+    if status in (400, 404) and "model" in b:
+        return ModelNotFoundError(f"HTTP {status}: {body}")
+    return ServerError(f"HTTP {status}: {body}")
+
+
+def _interruptible_sleep(seconds):
+    """SHUTDOWN 신호를 존중하며 대기(0.5초 단위 폴링)."""
+    end = time.time() + max(0, seconds)
+    while time.time() < end:
+        if SHUTDOWN.is_set():
+            return
+        time.sleep(0.5)
 
 
 DEFAULT_MODEL = "Gemma-4-E2B-it"  # 자동감지 실패 시 최후 폴백
@@ -139,15 +181,15 @@ def language_issue(text: str):
 def _validate(text: str) -> str:
     t = (text or "").strip()
     if len(t) < 8:
-        raise SummaryError("요약이 너무 짧음/비어있음")
+        raise ValidationErrorLLM("요약이 너무 짧음/비어있음")
     low = t.lower()
     for pat in REFUSAL_PATTERNS:
         if re.search(pat, low):
-            raise SummaryError(f"거절/헛소리 감지: {pat}")
+            raise ValidationErrorLLM(f"거절/헛소리 감지: {pat}")
     if config.LLM_ENFORCE_KOREAN:
         issue = language_issue(t)
         if issue:
-            raise SummaryError(f"언어 이탈: {issue}")
+            raise ValidationErrorLLM(f"언어 이탈: {issue}")
     return t
 
 
@@ -200,51 +242,59 @@ class OpenAICompatSummarizer:
             h["Authorization"] = f"Bearer {self.api_key}"
         return h
 
+    _CONN_EXC = (requests.ConnectTimeout, requests.ReadTimeout, requests.ConnectionError,
+                 requests.exceptions.ChunkedEncodingError, requests.Timeout)
+
     def _call(self, model, prompt):
         url = f"{self.base_url}/chat/completions"
         payload = self._payload(model, prompt)
         if self.stream:
             return self._call_stream(url, payload)
-        r = requests.post(url, json=payload, headers=self._headers(),
-                          timeout=(self.connect_timeout, self.timeout))
+        try:
+            r = requests.post(url, json=payload, headers=self._headers(),
+                              timeout=(self.connect_timeout, self.timeout))
+        except self._CONN_EXC as e:
+            raise ConnectionErrorLLM(f"연결 실패: {type(e).__name__}") from e
         if r.status_code != 200:
-            raise SummaryError(f"HTTP {r.status_code}: {r.text[:300]}")  # 서버 사유 노출
+            raise _classify_http(r.status_code, r.text[:300])   # 모델오류 vs 서버오류 분류
         data = r.json()
         try:
             return data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
-            raise SummaryError(f"응답 파싱 실패: {e} / {str(data)[:200]}")
+            raise ServerError(f"응답 파싱 실패: {e} / {str(data)[:200]}")
 
     def _call_stream(self, url, payload):
         parts = []
         start = time.time()
-        with requests.post(url, json=payload, headers=self._headers(),
-                           timeout=(self.connect_timeout, self.timeout), stream=True) as r:
-            if r.status_code != 200:
-                body = r.text[:300]
-                raise SummaryError(f"HTTP {r.status_code}: {body}")  # 서버 사유 노출
-            for line in r.iter_lines(decode_unicode=True):
-                if SHUTDOWN.is_set():                          # 종료 신호 → 즉시 스트림 중단
-                    break
-                if time.time() - start > self.wall_timeout:   # 총 벽시계 상한 → 중단(부분 보존)
-                    break
-                if not line:
-                    continue
-                if line.startswith("data:"):
-                    line = line[5:].strip()
-                if line == "[DONE]":
-                    break
-                try:
-                    obj = json.loads(line)
-                except ValueError:
-                    continue
-                ch = (obj.get("choices") or [{}])[0]
-                delta = ch.get("delta") or {}
-                tok = delta.get("content")
-                if tok:
-                    parts.append(tok)
+        try:
+            with requests.post(url, json=payload, headers=self._headers(),
+                               timeout=(self.connect_timeout, self.timeout), stream=True) as r:
+                if r.status_code != 200:
+                    raise _classify_http(r.status_code, r.text[:300])
+                for line in r.iter_lines(decode_unicode=True):
+                    if SHUTDOWN.is_set():                          # 종료 신호 → 즉시 스트림 중단
+                        break
+                    if time.time() - start > self.wall_timeout:   # 총 벽시계 상한 → 중단(부분 보존)
+                        break
+                    if not line:
+                        continue
+                    if line.startswith("data:"):
+                        line = line[5:].strip()
+                    if line == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(line)
+                    except ValueError:
+                        continue
+                    ch = (obj.get("choices") or [{}])[0]
+                    delta = ch.get("delta") or {}
+                    tok = delta.get("content")
+                    if tok:
+                        parts.append(tok)
+        except self._CONN_EXC as e:
+            raise ConnectionErrorLLM(f"연결/스트림 실패: {type(e).__name__}") from e
         if not parts:
-            raise SummaryError("스트림 응답이 비어있음")
+            raise ServerError("스트림 응답이 비어있음")   # 서버 응답O인데 생성 0 → 재시작 후보
         return "".join(parts)
 
     def ensure_model(self):
@@ -255,24 +305,52 @@ class OpenAICompatSummarizer:
         return self.model
 
     def summarize(self, title, content_html, ocr_text=None):
+        """요약. 사유별 재시도 정책(config 참조). 최종 실패 시 SummaryError(사유 누적 메시지)."""
         self.ensure_model()
         body = html_to_text(content_html)
         if ocr_text:
             body += "\n\n[이미지 OCR (오탈자 가능)]\n" + str(ocr_text)
         if not body.strip():
-            raise SummaryError("요약할 본문이 없음")
-        prompt = self._compose_prompt(title, body)
+            raise EmptyContentError("요약할 본문이 없음")   # #3: LLM 호출 안 함(제목만으론 요약 안 함)
+        base_prompt = self._compose_prompt(title, body)
 
-        def run(model):
+        def attempt(model, prompt):
             text, _ = strip_degenerate(self._call(model, prompt))  # 반복 붕괴 제거
             return _validate(text)
 
-        try:
-            return run(self.model), self.model
-        except SummaryError:
-            if not self.fallback_model:
-                raise
-        return run(self.fallback_model), self.fallback_model
+        model = self.model
+        prompt = base_prompt
+        retries = config.LLM_RETRY_LIMIT
+        reasons = []
+        while True:
+            try:
+                return attempt(model, prompt), model
+            except ModelNotFoundError as e:
+                reasons.append(f"[model] {e}")
+                # 모델명 오류: 폴백 모델로 교체(재시도 한도 미차감)
+                if self.fallback_model and model != self.fallback_model:
+                    model = self.fallback_model
+                    continue
+                raise SummaryError(" / ".join(reasons))
+            except ConnectionErrorLLM as e:
+                reasons.append(f"[conn] {e}")
+                if retries > 0 and not SHUTDOWN.is_set():
+                    retries -= 1
+                    _interruptible_sleep(config.LLM_RETRY_WAIT_SEC)  # 대기 후 같은 요청 재시도
+                    continue
+                raise SummaryError(" / ".join(reasons))
+            except (ValidationErrorLLM, ServerError) as e:
+                reasons.append(f"[{e.reason}] {e}")
+                if retries > 0 and not SHUTDOWN.is_set():
+                    retries -= 1
+                    # greedy라도 프롬프트에 1토큰만 더해도 그 지점부터 로짓 bias가 바뀌어 출력이 달라짐(리롤).
+                    # 같은(빠른) 모델 유지 + 미세 변형으로 재시도. 폴백 모델이 설정돼 있으면 함께 승격(선택).
+                    used = config.LLM_RETRY_LIMIT - retries          # 1,2,… 재시도마다 변형폭 증가
+                    prompt = base_prompt + f"\n\n(한국어로만, 반복 없이 간결히){'.' * used}"
+                    if self.fallback_model and model != self.fallback_model:
+                        model = self.fallback_model
+                    continue
+                raise SummaryError(" / ".join(reasons))
 
 
 class ClovaSummarizer:

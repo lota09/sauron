@@ -22,7 +22,7 @@ ROOT = os.path.dirname(HERE)
 SCHEMA = os.path.join(ROOT, "db", "schema.sql")
 
 # 시드에서 갱신할 설정 컬럼(채널/역할/active/seeded_at 제외)
-CONFIG_COLS = ["name_ko", "college", "department", "major", "list_url",
+CONFIG_COLS = ["name_ko", "kind", "college", "department", "major", "list_url",
                "link_selector", "content_selector", "url_prefix",
                "fetch_type", "login", "seed_pages", "icon_url", "note"]
 ALL_COLS = ["dept_id"] + CONFIG_COLS + ["discord_channel_id", "discord_role_id", "active", "seeded_at"]

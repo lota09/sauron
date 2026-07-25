@@ -18,6 +18,18 @@ class Store:
         self._con.execute("PRAGMA journal_mode=WAL;")
         self._con.execute("PRAGMA foreign_keys=ON;")
         self._lock = threading.RLock()
+        self._ensure_columns()
+
+    def _ensure_columns(self):
+        """경량 자동 이관: notices.fail_reason 없으면 추가(별도 마이그레이션 스크립트 불필요)."""
+        try:
+            cols = [r[1] for r in self._con.execute("PRAGMA table_info(notices)").fetchall()]
+            if cols and "fail_reason" not in cols:
+                self._con.execute("ALTER TABLE notices ADD COLUMN fail_reason TEXT")
+                self._con.execute("UPDATE app_meta SET value='3' WHERE key='schema_version' AND value<'3'")
+                self._con.commit()
+        except Exception:
+            pass  # 테이블 미생성 등: seed 후 다음 오픈에서 처리
 
     def checkpoint(self):
         """WAL을 본 DB 파일로 flush(TRUNCATE). 외부 뷰어가 최신 상태를 보게 함."""
@@ -38,6 +50,16 @@ class Store:
             rows = self._con.execute(
                 "SELECT * FROM depts WHERE active=1 ORDER BY dept_id"
             ).fetchall()
+        return [dict(r) for r in rows]
+
+    def depts_by_kind(self, kind: str, with_role: bool = False) -> List[Dict[str, Any]]:
+        """active 학과를 kind('general'|'major'|'etc')로 필터. with_role=True면 역할 배정된 것만."""
+        sql = "SELECT * FROM depts WHERE active=1 AND kind=?"
+        if with_role:
+            sql += " AND discord_role_id IS NOT NULL AND discord_role_id<>''"
+        sql += " ORDER BY college, name_ko"
+        with self._lock:
+            rows = self._con.execute(sql, (kind,)).fetchall()
         return [dict(r) for r in rows]
 
     def get_dept(self, dept_id: str) -> Optional[Dict[str, Any]]:
@@ -111,12 +133,12 @@ class Store:
             self._con.commit()
 
     def set_summary(self, notice_id: int, summary: str, engine: str,
-                    ocr_text: str = None, status: str = "done"):
+                    ocr_text: str = None, status: str = "done", fail_reason: str = None):
         with self._lock:
             self._con.execute(
                 "UPDATE notices SET summary=?, summary_engine=?, ocr_text=COALESCE(?, ocr_text), "
-                "status=?, updated_at=datetime('now') WHERE id=?",
-                (summary, engine, ocr_text, status, notice_id))
+                "status=?, fail_reason=?, updated_at=datetime('now') WHERE id=?",
+                (summary, engine, ocr_text, status, fail_reason, notice_id))
             self._con.commit()
 
     def update_content(self, notice_id: int, content_raw: str, images_json: str):

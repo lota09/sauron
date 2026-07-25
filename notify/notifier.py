@@ -19,6 +19,10 @@ import config
 API = "https://discord.com/api/v10"
 DEBUG_COLOR = 0xE74C3C
 NOTICE_COLOR = 0x62C6C4
+# 요약 성공 시 맨 끝에 붙는 면책 문구(마크다운 인용). 실패/내용없음 시 요약 자리에 뜨는 문구.
+SUMMARY_DISCLAIMER = "> AI는 실수 할 수 있습니다. 정확한 정보는 해당 공지를 확인해주세요."
+SUMMARY_FAIL_NOTE = "> 요약을 실패하였습니다."
+SUMMARY_NO_CONTENT_NOTE = "> 요약할 내용이 없습니다."
 
 
 def _load_token():
@@ -67,10 +71,18 @@ class Notifier:
             raise RuntimeError(f"디스코드 수정 실패 {r.status_code}: {r.text[:200]}")
         return r.json()
 
-    # ── 임베드 구성 ────────────────────────────────────
+    # ── 임베드 구성 (기존 스타일: 제목 + 요약 + 링크필드 + 푸터) ─────
     def _embed(self, notice, dept, mention):
         summary = (notice.get("summary") or "").strip()
-        desc = f"​\n{summary}\n​" if summary else "​"
+        status = notice.get("status")
+        if summary:
+            desc = f"​\n{summary}\n\n{SUMMARY_DISCLAIMER}\n​"     # 성공: 요약 + 면책 문구
+        elif status == "summary_failed":
+            desc = f"​\n{SUMMARY_FAIL_NOTE}\n​"                    # 실패: 대체 문구
+        elif status == "no_content":
+            desc = f"​\n{SUMMARY_NO_CONTENT_NOTE}\n​"              # 내용없음(#3): 제목만/OCR실패
+        else:
+            desc = "​"                                            # 발송 직후(요약 대기)
         return {
             "title": f"📢 {notice['title']}",
             "description": desc,
