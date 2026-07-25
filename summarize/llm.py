@@ -13,11 +13,20 @@ Summarizer.summarize(title, content_html, ocr_text) -> (summary:str, engine:str)
 """
 import json
 import re
+import threading
 import time
 import requests
 from bs4 import BeautifulSoup
 
 import config
+
+# 종료(에러/Ctrl-C) 시 진행 중 스트림 생성을 끊기 위한 신호(워커 스레드와 공유).
+SHUTDOWN = threading.Event()
+
+
+def request_shutdown():
+    """호출 시 진행 중인 LLM 스트림이 다음 토큰/타임아웃 시점에 중단된다(연결 종료 → 서버 생성 중지)."""
+    SHUTDOWN.set()
 
 # 요약 프롬프트는 config.py(LLM_SYSTEM_PROMPT / LLM_USER_TEMPLATE)에서 관리 — 스타일 조정 지점.
 
@@ -215,6 +224,8 @@ class OpenAICompatSummarizer:
                 body = r.text[:300]
                 raise SummaryError(f"HTTP {r.status_code}: {body}")  # 서버 사유 노출
             for line in r.iter_lines(decode_unicode=True):
+                if SHUTDOWN.is_set():                          # 종료 신호 → 즉시 스트림 중단
+                    break
                 if time.time() - start > self.wall_timeout:   # 총 벽시계 상한 → 중단(부분 보존)
                     break
                 if not line:

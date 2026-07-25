@@ -59,6 +59,7 @@ async def _run_forever(c):
                 await crawl_pass(c)
             except Exception as e:
                 c.log(f"[crawl_pass 예외] {e}")
+                c.notifier.debug(f"crawl_pass 예외: {e}")
             c.store.checkpoint()   # 상시 모드: 뷰어가 최신 상태 보게 주기적 flush
             await asyncio.sleep(config.CRAWL_INTERVAL_SEC)
     finally:
@@ -107,8 +108,20 @@ def main():
                 asyncio.run(_run_forever(c))
             except KeyboardInterrupt:
                 c.log("종료")
+    except Exception as e:
+        # 잡히지 않은 런타임 에러 → 감시채널로 디버그 메시지 후 재전파
+        import traceback
+        tb = traceback.format_exc()
+        c.log(f"[치명적 오류] {e}")
+        try:
+            c.notifier.debug(f"치명적 오류로 종료됨:\n{e}\n```\n{tb[-1500:]}\n```")
+        except Exception as de:
+            c.log(f"[debug 전송 실패] {de}")
+        raise
     finally:
-        c.store.close()   # WAL 체크포인트 → notice.db 본 파일에 반영
+        from summarize.llm import request_shutdown
+        request_shutdown()   # 진행 중 LLM 스트림 중단
+        c.store.close()      # WAL 체크포인트 → notice.db 본 파일에 반영
 
 
 if __name__ == "__main__":
