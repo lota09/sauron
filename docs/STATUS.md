@@ -1,6 +1,6 @@
 # sauron_reborn 진행 현황
 
-_기준: 오프라인 테스트 58/58 통과. "온디바이스 초저비용·무외부의존·누락0" 철학._
+_기준: 오프라인 테스트 59/59 통과. "온디바이스 초저비용·무외부의존·누락0" 철학._
 
 ---
 
@@ -10,7 +10,7 @@ _기준: 오프라인 테스트 58/58 통과. "온디바이스 초저비용·무
 - 설정주도 크롤러: 학과별 CSS 셀렉터 + fetch_type 예외(json_ssfilm/mediamba·post_lawyer·onclick_media·dom_materials). 64개 학과 시드.
 - URL 차집합 신규감지 + 최초 시딩(무발송) + UPDATE_LIMIT 대량알림 가드.
 - 단일 asyncio: 크롤 → 감지 → D1 즉시발송(제목+링크) → 요약큐 → D2 요약 edit.
-- SQLite WAL. schema v2(kind + FK ON UPDATE CASCADE) + v3(fail_reason, Store 오픈 시 자동 이관).
+- SQLite WAL. schema v4: `seen_notices`를 `notices`로 **단일 테이블화**(status: seeded→detected→notified→done/…). 시딩이 제목까지 기억 → query 검색 가능.
 
 **요약/LLM**
 - OpenAI 호환(OlliteRT, Gemma-4-E2B-it) 스트리밍 + 모델 자동감지.
@@ -22,11 +22,11 @@ _기준: 오프라인 테스트 58/58 통과. "온디바이스 초저비용·무
 **디스코드**
 - 구독봇 3단계(공통→전공→기타) + 공개 상주버튼(재시작 후에도 동작) + 관리자 `/구독버튼생성` + 임베드 + 로깅.
 - `setup_guild`(이름 기준 실존확인) — 실행완료, 역할/채널 63개 생성·재사용.
-- 발송 라우팅: 학과채널/@everyone(실서비스) · 통합채널(--mono) · 감시채널 디버그.
+- 발송 라우팅: `--dst` 단일 축 — `null`(무발송)·`mono`(통합채널)·`poly`(학과채널+@everyone)·`<채널ID>`. 감시채널 디버그는 토큰만 있으면 항상.
 
 **CLI/라우팅**
-- 모드: `init`(시딩전용) · `run` · `redo N`(임의 재요약) · `redo "검색어"`(검색→선택→재처리).
-- 직교 플래그: `--prod`(길드) · `--mono`(통합채널) · `--dryrun`.
+- 모드: `run`(상시) · `once`(1회, cron 근사) · `redo N`(임의 재요약) · `query "검색어"`(검색→선택→재처리·삭제).
+- `--dst {null|mono|poly|<채널ID>}`(택1, 기본 null) + `--nosummary`(직교: 요약·상세fetch 생략, dst null과 함께면 순수 시딩).
 
 **DB 헬퍼**: forget_url · forget_like(부분문자열) · search_notices.
 **문서**: DESIGN.md · vision_llm_experiment.md · embed_gallery.html · README.
@@ -36,14 +36,14 @@ _기준: 오프라인 테스트 58/58 통과. "온디바이스 초저비용·무
 ## 🔵 지금 검증할 차례
 
 1. **이미지 추출 사이트별 검증** — scatch 확인됨(포스터 2장 추출 OK). **disu 재확인**(자기 셀렉터 `#printbody > div`로 재테스트, 결과 대기). 나머지 학과도 셀렉터가 본문 이미지를 잡는지 표본 점검.
-2. **비전 E2E** — 이미지 공지 하나를 `redo "추가학기" --mono`로 재처리 → `summary_engine=vision:…` 확인 + 요약 품질 확인.
-3. **전체 E2E(디바이스)** — `init`(시딩) → `run`/`redo` → 실LLM → 발송 → edit 까지 디버그 서버에서 한 바퀴.
+2. **비전 E2E** — 이미지 공지 하나를 `query "추가학기" --dst mono`로 검색·재처리 → `summary_engine=vision:…` 확인 + 요약 품질 확인.
+3. **전체 E2E(디바이스)** — `once --dst null --nosummary`(시딩) → `run`/`redo`/`query --dst mono` → 실LLM → 발송 → edit 까지 한 바퀴.
 
 ---
 
 ## ⬜ 앞으로 (우선순위 순)
 
-**A. 깨진 사이트 수리 (잘못된 URL)** — init 로그에서 확인됨:
+**A. 깨진 사이트 수리 (잘못된 URL)** — 시딩 로그에서 확인됨:
 - `lawyer`(법과대 국제법무): 404 — `lawyer.ssu.ac.kr/web/05/notice_list.do` 경로/POST 방식 재확인.
 - `media`(글로벌미디어): 403 Forbidden — 헤더/차단 우회 필요.
 - `ssuconvergence`(융합특성화자유전공): 도메인 소멸(DNS 실패) — 새 도메인 조사 or 비활성.

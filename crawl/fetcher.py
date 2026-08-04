@@ -236,8 +236,10 @@ class Fetcher:
 
     @staticmethod
     def _img_base(u):
-        u = re.sub(r"-\d+x\d+(?=\.[^.]*$)", "", u)
-        return re.sub(r"_\d+(?=\.[^.]*$)", "", u)
+        # WordPress 리사이즈 변형(-1568x2216 등)만 제거해 '같은 원본의 여러 해상도'를 묶는다.
+        # ⚠ '_1','_2','_3'(밑줄+숫자)은 '붙임 1·2·3'처럼 서로 다른 파일이므로 제거 금지.
+        #    (예전엔 여기서 _숫자까지 지워 3장짜리 공지가 1장으로 뭉개졌다 — 회귀 방지: test_image_multi_extract)
+        return re.sub(r"-\d+x\d+(?=\.[^.]*$)", "", u)
 
     @staticmethod
     def _img_dims(u):

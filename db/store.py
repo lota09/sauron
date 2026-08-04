@@ -18,18 +18,6 @@ class Store:
         self._con.execute("PRAGMA journal_mode=WAL;")
         self._con.execute("PRAGMA foreign_keys=ON;")
         self._lock = threading.RLock()
-        self._ensure_columns()
-
-    def _ensure_columns(self):
-        """경량 자동 이관: notices.fail_reason 없으면 추가(별도 마이그레이션 스크립트 불필요)."""
-        try:
-            cols = [r[1] for r in self._con.execute("PRAGMA table_info(notices)").fetchall()]
-            if cols and "fail_reason" not in cols:
-                self._con.execute("ALTER TABLE notices ADD COLUMN fail_reason TEXT")
-                self._con.execute("UPDATE app_meta SET value='3' WHERE key='schema_version' AND value<'3'")
-                self._con.commit()
-        except Exception:
-            pass  # 테이블 미생성 등: seed 후 다음 오픈에서 처리
 
     def checkpoint(self):
         """WAL을 본 DB 파일로 flush(TRUNCATE). 외부 뷰어가 최신 상태를 보게 함."""
@@ -78,39 +66,44 @@ class Store:
                 "UPDATE depts SET seeded_at=datetime('now') WHERE dept_id=?", (dept_id,))
             self._con.commit()
 
-    # ── seen_notices (차집합) ──────────────────────────
+    # ── 차집합 "기억" = notices의 (dept_id,url) ───────────
     def seen_urls(self, dept_id: str) -> Set[str]:
+        """이 학과에서 이미 본 url 집합(status 무관: seeded 포함)."""
         with self._lock:
             rows = self._con.execute(
-                "SELECT url FROM seen_notices WHERE dept_id=?", (dept_id,)).fetchall()
+                "SELECT url FROM notices WHERE dept_id=?", (dept_id,)).fetchall()
         return {r["url"] for r in rows}
 
-    def mark_seen(self, dept_id: str, urls):
-        urls = list(urls)
-        if not urls:
+    def seed_rows(self, dept_id: str, items):
+        """목록 항목(제목+url)을 status='seeded'로 기억(무발송·무요약). items=[{'title','url'}]."""
+        items = list(items)
+        if not items:
             return
         with self._lock:
             self._con.executemany(
-                "INSERT OR IGNORE INTO seen_notices(dept_id, url) VALUES (?, ?)",
-                [(dept_id, u) for u in urls],
+                "INSERT OR IGNORE INTO notices(dept_id, url, title, status) VALUES (?,?,?, 'seeded')",
+                [(dept_id, it["url"], (it.get("title") or "(제목없음)")) for it in items],
             )
             self._con.commit()
 
-    # ── notices (큐 겸 아카이브) ───────────────────────
-    def insert_notice(self, dept_id: str, title: str, url: str,
-                      content_raw: str = None, images_json: str = None) -> Optional[int]:
-        """신규 공지 삽입. url UNIQUE 충돌 시 None(이미 존재)."""
+    # ── notices (처리 레코드) ──────────────────────────
+    def promote_notice(self, dept_id: str, title: str, url: str,
+                       content_raw: str = None, images_json: str = None) -> Optional[int]:
+        """seeded(또는 미존재) 행을 detected로 승격하며 내용 채움(upsert). 반환 notice_id.
+        기존 done 행 재처리 시에도 summary/engine/fail_reason 초기화 후 detected로 되돌림."""
         with self._lock:
-            try:
-                cur = self._con.execute(
-                    "INSERT INTO notices(dept_id, title, url, content_raw, images_json, status) "
-                    "VALUES (?,?,?,?,?, 'detected')",
-                    (dept_id, title, url, content_raw, images_json),
-                )
-                self._con.commit()
-                return cur.lastrowid
-            except sqlite3.IntegrityError:
-                return None
+            self._con.execute(
+                "INSERT INTO notices(dept_id, title, url, content_raw, images_json, status, created_at) "
+                "VALUES (?,?,?,?,?, 'detected', datetime('now')) "
+                "ON CONFLICT(dept_id, url) DO UPDATE SET "
+                "  title=excluded.title, content_raw=excluded.content_raw, images_json=excluded.images_json, "
+                "  status='detected', created_at=datetime('now'), "
+                "  summary=NULL, summary_engine=NULL, fail_reason=NULL",
+                (dept_id, title, url, content_raw, images_json))
+            r = self._con.execute(
+                "SELECT id FROM notices WHERE dept_id=? AND url=?", (dept_id, url)).fetchone()
+            self._con.commit()
+        return r["id"] if r else None
 
     def get_notice(self, notice_id: int) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -149,21 +142,25 @@ class Store:
             self._con.commit()
 
     def forget_url(self, dept_id: str, url: str):
-        """디버그용: seen에서 지우고 notices의 기존 행도 제거 → 다음 크롤에 '신규'로 재감지·재요약."""
+        """디버그용: notices에서 행 제거 → 다음 크롤에 '신규'로 재감지·재처리."""
         with self._lock:
-            self._con.execute("DELETE FROM seen_notices WHERE dept_id=? AND url=?", (dept_id, url))
-            self._con.execute("DELETE FROM notices WHERE url=?", (url,))
+            self._con.execute("DELETE FROM notices WHERE dept_id=? AND url=?", (dept_id, url))
             self._con.commit()
 
     def forget_like(self, url_substring: str) -> int:
-        """url에 부분문자열이 포함된 공지를 seen_notices+notices 양쪽에서 삭제 → 다음 크롤에 재감지·재요약.
-        instr 사용(LIKE의 % 와일드카드와 URL의 % 인코딩 충돌 회피). 반환: 지운 seen 행 수."""
+        """url에 부분문자열이 포함된 공지를 notices에서 삭제 → 다음 크롤에 재감지·재처리.
+        instr 사용(LIKE의 % 와일드카드와 URL의 % 인코딩 충돌 회피). 반환: 지운 행 수."""
         with self._lock:
-            cur = self._con.execute("DELETE FROM seen_notices WHERE instr(url, ?) > 0", (url_substring,))
+            cur = self._con.execute("DELETE FROM notices WHERE instr(url, ?) > 0", (url_substring,))
             n = cur.rowcount
-            self._con.execute("DELETE FROM notices WHERE instr(url, ?) > 0", (url_substring,))
             self._con.commit()
         return n
+
+    def delete_notice(self, notice_id: int) -> None:
+        """query 모드 'DB에서 제거' 용: 특정 공지 행 삭제 → 재감지 대상이 됨."""
+        with self._lock:
+            self._con.execute("DELETE FROM notices WHERE id=?", (notice_id,))
+            self._con.commit()
 
     def pending_summary_ids(self) -> List[int]:
         """부팅 재적재: 아직 요약 안 끝난(발송됐거나 요약중) 공지."""
@@ -186,6 +183,19 @@ class Store:
             rows = self._con.execute(
                 "SELECT * FROM notices ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+    # ── app_meta (키-값: schema_version, 자동생성 채널ID 등) ──
+    def get_meta(self, key: str, default=None):
+        with self._lock:
+            r = self._con.execute("SELECT value FROM app_meta WHERE key=?", (key,)).fetchone()
+        return r["value"] if r else default
+
+    def set_meta(self, key: str, value) -> None:
+        with self._lock:
+            self._con.execute(
+                "INSERT INTO app_meta(key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+            self._con.commit()
 
     # ── 구독 (후속 단계에서 봇이 사용) ─────────────────
     def add_user(self, discord_user_id: str):

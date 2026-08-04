@@ -133,33 +133,38 @@ INFOCOM_RETRY = _get_int("INFOCOM_RETRY", 3)    # 학교서버 버그 F5 흉내 
 
 # ── 디스코드 ─────────────────────────────────────────
 DISCORD_TOKEN_FILE = _get("DISCORD_TOKEN_FILE", os.path.join(_HERE, "secrets", "discord-api-info.json"))
-DISCORD_DEBUG_CHANNEL_ID = _get("DISCORD_DEBUG_CHANNEL_ID", "1355610759777882162")  # 운영 감시채널
-# 길드(서버) ID도 debug/prod로 분기. DEBUG(또는 debug 플래그)=디버깅 서버, 아니면 실서비스 서버.
-DEBUG_GUILD_ID = _get("DEBUG_GUILD_ID", "1195291355258310696")   # 디버깅 서버
-PROD_GUILD_ID = _get("PROD_GUILD_ID", "")                         # 실서비스 서버(최종 검수 후 입력)
+
+# 길드(서버) — 첫 세팅에 필요한 건 봇 토큰 + 이 값 하나뿐. setup_guild가 여기에 역할·채널을 만든다.
+#   배포 시 다른 서버로 옮기려면 값만 바꿔 setup_guild를 재실행하면 채널ID가 자동 갱신된다.
+#   DEBUG_GUILD_ID/PROD_GUILD_ID는 두 서버를 오갈 때만 쓰는 '선택적' 오버라이드(없으면 DISCORD_GUILD_ID 사용).
+DISCORD_GUILD_ID = _get("DISCORD_GUILD_ID", "")
+DEBUG_GUILD_ID = _get("DEBUG_GUILD_ID", DISCORD_GUILD_ID)
+PROD_GUILD_ID = _get("PROD_GUILD_ID", "")
 DISCORD_CHANNEL_PREFIX = _get("DISCORD_CHANNEL_PREFIX", "")  # 학과 채널명 접두(선택)
 
-# 라우팅 두 축(직교):
-#   ① 길드: 기본 디버그 서버, '--prod' 만 실서비스(DEBUG_EN).
-#   ② 채널: 기본 학과별 채널, '--mono' 면 아래 통합채널 하나로 몰빵.
-#   ③ 전송: '--dryrun' 이면 전송 안 함(로그만).
-#   @everyone 은 실서비스(비-mono·prod)일 때만. 디버그/모노는 무멘션.
-MONO_CHANNEL_ID = _get("MONO_CHANNEL_ID", _get("DEBUG_NOTICE_CHANNEL_ID", "1530567154473373837"))  # --mono 몰빵 대상(통합공지)
+# --dst mono 대상(통합공지 채널). '값을 지정한 단일 채널 몰빵' = --dst <채널ID>와 같은 메커니즘의 이름표.
+#   비우면 --dst mono 불가(그땐 --dst <채널ID>로 직접). --dst poly(각 학과채널)는 이 값과 무관.
+MONO_CHANNEL_ID = _get("MONO_CHANNEL_ID", "")
 DEBUG_NOTICE_CHANNEL_ID = MONO_CHANNEL_ID   # 하위호환 별칭
-DEBUG_SUBSCRIBE_CHANNEL_ID = _get("DEBUG_SUBSCRIBE_CHANNEL_ID", "1530318804968538195")  # 구독관리
-DEBUG_DEBUG_CHANNEL_ID = _get("DEBUG_DEBUG_CHANNEL_ID", "1530566884121116783")       # 디버그(개발용)
+
+# 감시(디버그) 채널 — 크롤/요약 오류 임베드가 가는 곳.
+#   기본: setup_guild가 이름(DEBUG_CHANNEL_NAME)으로 '자동 생성/재사용'하고 그 ID를 DB(app_meta)에 저장.
+#         → 첫 세팅 시 사람이 채널ID를 손으로 넣을 필요가 없다.
+#   수동 지정하려면 DEBUG_CHANNEL_ID에 채널ID를 넣으면 그 값이 우선한다.
+DEBUG_CHANNEL_ID = _get("DEBUG_CHANNEL_ID", "")
+DEBUG_CHANNEL_NAME = _get("DEBUG_CHANNEL_NAME", "사우론-감시")
+DEBUG_SUBSCRIBE_CHANNEL_ID = _get("DEBUG_SUBSCRIBE_CHANNEL_ID", "")  # 구독관리(선택)
+
 # 디버그 모드 단일 식별자. 라우팅은 config가 아니라 '실행 플래그'로만 결정(안전).
-# 기본 True(가짜 개발채널). 오직 '--prod' 만 False(실채널). config.json은 이 값을 못 건드림.
 DEBUG_EN = True
-# dry-run(디스코드 전송 안 함)은 config가 아니라 '--dryrun' 플래그로만. 기본은 전송함.
 
 ICON_DEFAULT = _get("ICON_DEFAULT", "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg")
 
 
 def active_guild_id(debug=None):
-    """debug=True(또는 DEBUG_EN)면 디버깅 서버, 아니면 실서비스 서버 ID 반환."""
+    """debug=True(또는 DEBUG_EN)면 디버깅 서버, 아니면 실서비스 서버. 각각 없으면 DISCORD_GUILD_ID로 폴백."""
     d = DEBUG_EN if debug is None else debug
-    return DEBUG_GUILD_ID if d else PROD_GUILD_ID
+    return (DEBUG_GUILD_ID or DISCORD_GUILD_ID) if d else (PROD_GUILD_ID or DISCORD_GUILD_ID)
 
 
 def debug_from_argv(argv):

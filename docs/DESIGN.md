@@ -45,7 +45,7 @@
 ```
                  ┌───────────────── Note20 Ultra (단일 asyncio 프로세스) ─────────────────┐
                  │                                                                        │
-[스케줄러 10분]──┼─▶ (B) 크롤 & 차집합 감지 ──▶ SQLite(seen_notices, notices)              │
+[스케줄러 10분]──┼─▶ (B) 크롤 & 차집합 감지 ──▶ SQLite(notices 단일 테이블)               │
                  │           │                                                            │
                  │           ▼  (신규 감지 즉시)                                           │
                  │      (D1) 디스코드 "제목+링크+@everyone" 발송 → message_id 저장         │
@@ -89,14 +89,14 @@
 sauron이 이미 도달한 정답을 계승한다. (`Overview.py` + `Update.py`)
 
 ```
-[새로 크롤한 URL 집합] − [seen_notices에 기억된 URL 집합] = [신규]
+[새로 크롤한 URL 집합] − [notices에 기억된 (dept_id,url) 집합] = [신규]
 ```
 
 - **판별 키 = URL** (게시물 고유). 제목·게시위치가 아니다 → **고정공지(핀)·순서 꼬임·마감 재정렬을 자동 흡수.** → **BOLD/핀 판별 로직 불필요(폐기).**
 - **UPDATE_LIMIT 가드(계승):** 한 학과에서 신규가 임계치(기본 5, 설정값) 초과면 = 사이트 구조 변경으로 전부 "신규"로 보이는 상황일 확률 ↑ → **대량 알림 차단 + 감시채널 경보.**
-- **시딩(최초 1회, 우려1 해소):** 학과별 `seen_notices`가 비어 있으면 → 목록 **최대 3페이지의 URL만** 긁어 `seen_notices`에 **전량 등록(무알림)**. 이후부터 진짜 신규만 정상 처리. (최초 전량 fetch+요약이라는 고비용 회피)
+- **시딩(최초 1회, 우려1 해소):** 학과가 미시딩(`depts.seeded_at` NULL)이면 → 목록 **최대 3페이지의 (제목·URL)만** 긁어 `notices`에 **`status='seeded'`로 전량 등록(무발송·무요약)**. 이후부터 진짜 신규만 정상 처리. (최초 전량 fetch+요약이라는 고비용 회피)
   - 시딩과 UPDATE_LIMIT은 함께 동작: 시딩된 학과는 첫 정상런에서 신규가 소수여야 정상.
-- `seen_notices` 테이블이 sauron의 `buffers/last-*.txt`를 대체(파일 → DB).
+- 단일 `notices` 테이블의 `seeded` 행이 sauron의 `buffers/last-*.txt`를 대체(파일 → DB). 제목까지 기억하므로 시딩 공지도 `query` 검색 가능.
 
 ---
 
@@ -196,28 +196,27 @@ CREATE TABLE depts (
   active             INTEGER DEFAULT 1
 );
 
--- 차집합용 "기억" (sauron buffers/last-*.txt 대체)
-CREATE TABLE seen_notices (
-  dept_id       TEXT NOT NULL,
-  url           TEXT NOT NULL,
-  first_seen_at TEXT DEFAULT (datetime('now')),
-  PRIMARY KEY (dept_id, url)
-);
-
--- 공지 처리 큐 겸 아카이브
+-- 공지 = 차집합 "기억" + 처리 레코드 통합 (구 seen_notices + notices, sauron buffers/last-*.txt 대체)
+--   status: seeded → detected → notified → summarizing → done | summary_failed | no_content
+--   seeded = 목록에서 (제목·url)만 기억(무발송·무요약) = 차집합의 "본 것".
 CREATE TABLE notices (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-  dept_id            TEXT NOT NULL,
+  dept_id            TEXT NOT NULL REFERENCES depts(dept_id) ON DELETE CASCADE ON UPDATE CASCADE,
   title              TEXT NOT NULL,
-  url                TEXT UNIQUE NOT NULL,
-  content_raw        TEXT,
+  url                TEXT NOT NULL,
+  content_raw        TEXT,                 -- 처리 시 채움. seeded면 NULL
   images_json        TEXT,                 -- [{url,filename}, ...]
   ocr_text           TEXT,
   summary            TEXT,
-  status             TEXT DEFAULT 'detected', -- detected→notified→summarizing→done | summary_failed
+  summary_engine     TEXT,                 -- 'Gemma-…' | 'vision:…' | NULL
+  fail_reason        TEXT,                 -- 실패/내용없음 사유
+  status             TEXT NOT NULL DEFAULT 'seeded',
+  discord_channel_id TEXT,
   discord_message_id TEXT,                 -- edit 대상
-  created_at         TEXT DEFAULT (datetime('now')),
-  updated_at         TEXT
+  first_seen_at      TEXT NOT NULL DEFAULT (datetime('now')),  -- 최초 기억(차집합)
+  created_at         TEXT,                 -- 처리(promote) 시각
+  updated_at         TEXT,
+  UNIQUE(dept_id, url)                     -- 차집합 키(학과별)
 );
 
 -- 구독 (원본 기록; 실제 게이팅은 디스코드 역할)
@@ -242,7 +241,7 @@ sauron_reborn/
 ├─ config/                   ← 상수·비밀키(secrets/) 로더
 ├─ db/
 │   ├─ schema.sql
-│   └─ store.py              ← SQLite 접근 계층(depts/seen/notices/subs)
+│   └─ store.py              ← SQLite 접근 계층(depts/notices/subs)
 ├─ crawl/
 │   ├─ scheduler.py          ← APScheduler 10분 트리거
 │   ├─ fetcher.py            ← 제네릭 CSS 크롤 + fetch_type 예외(+infocom 재시도)

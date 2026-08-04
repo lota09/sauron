@@ -31,12 +31,19 @@ async def summarize_one(c, notice_id: int):
         ocr_text = "\n".join(parts)
 
     # 이미지가 있으면 요약 요청에 무조건 첨부(텍스트 유무 무관). 최대 N장(컨텍스트/지연 상한).
+    #   추출(images) → 인코딩 성공(data_urls). 둘의 차이 = 로드/포맷 실패로 '입력 못 한' 장수.
     data_urls = []
     if images and config.LLM_VISION:
-        for img in images[:config.LLM_VISION_MAX_IMAGES]:
+        cand = images[:config.LLM_VISION_MAX_IMAGES]
+        for img in cand:
             du = await asyncio.to_thread(to_data_url, img.get("url", ""), config.LLM_VISION_MAX_PX)
             if du:
                 data_urls.append(du)
+            else:
+                c.log(f"[이미지 제외] 로드/디코딩 실패 → LLM 입력 못 함: {img.get('url', '')[:80]}")
+        if len(images) > config.LLM_VISION_MAX_IMAGES:
+            c.log(f"[이미지 상한] {len(images)}장 중 {config.LLM_VISION_MAX_IMAGES}장만 입력"
+                  f"(LLM_VISION_MAX_IMAGES)")
 
     # LLM 요약 (동시성 제한). 재시도는 summarize() 내부. 본문·OCR·이미지 모두 없으면 no_content.
     summary = engine = None
@@ -76,7 +83,10 @@ async def summarize_one(c, notice_id: int):
     if summary:
         await asyncio.to_thread(c.store.set_summary, notice_id, summary, engine, ocr_text or None, "done")
         await _edit(await asyncio.to_thread(c.store.get_notice, notice_id))
-        c.log(f"[요약 완료] {engine} :: {notice['title'][:40]}")
+        # 이미지 입력 현황을 로그로 노출: 실제 LLM에 넣은 장수 / 추출 장수.
+        #   (LLM이 그 이미지를 '이해'했는지는 여기서 알 수 없다 — 입력 여부만 확인 가능.)
+        img_note = f" (이미지 {len(data_urls)}/{len(images)}장 입력)" if images else ""
+        c.log(f"[요약 완료] {engine} :: {notice['title'][:40]}{img_note}")
     elif no_content:
         # 제목만 있고 본문·OCR 모두 없음 → LLM에 안 보냄. '요약할 내용이 없습니다' 표기(재시도 X).
         # 실패가 아니므로 디버그 발송 안 함. 사유는 DB(fail_reason)에만 기록(사후 분석용).

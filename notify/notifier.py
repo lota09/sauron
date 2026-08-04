@@ -37,13 +37,18 @@ def _load_token():
 
 
 class Notifier:
-    def __init__(self, logger=None, debug=None, dry_run=None, mono=None):
+    def __init__(self, logger=None, dst="null", debug_channel_id=None):
+        """dst: 'null'(전송안함) | 'mono'(통합채널) | 'poly'(각 학과채널) | '<채널ID>'(명시 채널).
+        debug_channel_id: 감시(디버그) 채널. 미지정 시 config.DEBUG_CHANNEL_ID(수동) 사용.
+        보통 build_components가 config 또는 DB(app_meta, setup_guild 자동생성분)에서 채워 넘긴다."""
         self.token = _load_token()
         self.logger = logger
-        self.debug_mode = config.DEBUG_EN if debug is None else debug   # True: 디버그 서버로
-        self.mono = bool(mono)                        # True: 모든 공지를 통합채널 하나로 몰빵
-        self.dry = bool(dry_run) or not self.token   # 전송 안 함(--dryrun) 또는 토큰 없음
+        self.dst = str(dst or "null")
+        self.send_enabled = (self.dst != "null")   # 보낼 의사(dst != null)
+        self.dry = not self.token                  # 실제 POST 불가(토큰 없음) → 시뮬레이션
+        self.debug_channel_id = debug_channel_id or config.DEBUG_CHANNEL_ID or None
         self._fake = 0
+        self._poly_warned = set()                  # poly 폴백 경고 학과별 1회만
 
     def _log(self, msg):
         (self.logger.info if self.logger else print)(msg)
@@ -98,18 +103,30 @@ class Notifier:
         }
 
     def _resolve_channel(self, dept):
-        if self.mono:
-            # --mono: 모든 공지를 통합채널 하나로 몰빵(무멘션). 빠른 개발 확인용.
+        """dst에 따라 (channel_id, mention) 결정."""
+        if self.dst == "poly":                                   # 각 학과 전용 채널(+@everyone)
+            return dept.get("discord_channel_id"), "@everyone"
+        if self.dst == "mono":                                   # 통합채널 몰빵(무멘션)
             return config.MONO_CHANNEL_ID, ""
-        # 학과별 채널. @everyone 은 실서비스일 때만(디버그 서버는 무멘션).
-        return dept.get("discord_channel_id"), ("" if self.debug_mode else "@everyone")
+        if self.dst.isdigit():                                   # 명시한 단일 채널(무멘션)
+            return self.dst, ""
+        return None, ""                                          # null 등 → 전송 없음
 
     # ── 공개 API ──────────────────────────────────────
     def send_new(self, notice, dept):
         channel_id, mention = self._resolve_channel(dept)
         if not channel_id:
-            # 학과채널 미배정(setup_guild 전) → 통합채널로 폴백 + 무멘션
-            channel_id = config.MONO_CHANNEL_ID
+            # 대상 채널 없음 → 통합채널 폴백. 왜 폴백했는지 로그로 드러낸다(조용한 오배송 방지).
+            if self.dst == "poly":
+                did = dept.get("dept_id") or ""
+                if did not in self._poly_warned:
+                    self._poly_warned.add(did)
+                    self._log(f"[경고] poly인데 '{dept.get('name_ko') or did}' 학과채널 미배정 "
+                              f"→ 통합채널 폴백. `python -m notify.setup_guild` 로 채널 생성 필요")
+            elif self.dst == "mono":
+                self._log("[경고] --dst mono 인데 MONO_CHANNEL_ID 미설정 → 발송 대상 없음. "
+                          "config에 MONO_CHANNEL_ID를 넣거나 --dst <채널ID>를 쓰세요")
+            channel_id = config.MONO_CHANNEL_ID or "null"
             mention = ""
         res = self._post(channel_id, self._embed(notice, dept, mention))
         return channel_id, res["id"]
@@ -128,8 +145,18 @@ class Notifier:
             "footer": {"text": "사우론의 눈"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        channel = config.DEBUG_DEBUG_CHANNEL_ID if self.debug_mode else config.DISCORD_DEBUG_CHANNEL_ID
+        channel = self.debug_channel_id
+        if not (channel and self.token):
+            return          # 감시채널 미설정(setup_guild 미실행) 또는 토큰 없음: 스킵(로그만)
         try:
-            self._post(channel, embed)
+            self._post_debug(channel, embed)
         except Exception as e:
             self._log(f"[debug 전송 실패] {e}")
+
+    def _post_debug(self, channel_id, embed):
+        # debug는 dst=null(dry)여도 전송(감시 목적). 토큰 있을 때만.
+        r = requests.post(f"{API}/channels/{channel_id}/messages",
+                          headers=self._headers(), data=json.dumps({"embeds": [embed]}), timeout=30)
+        if r.status_code not in (200, 201):
+            raise RuntimeError(f"디버그 전송 실패 {r.status_code} (ch={channel_id}): {r.text[:150]}")
+        return r.json()

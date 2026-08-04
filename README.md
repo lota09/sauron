@@ -20,36 +20,44 @@ cp secrets/discord-api-info.json.example secrets/discord-api-info.json  # 봇 �
 ## 실행
 
 ```bash
-python init/seed_db.py     # 1) DB 스키마(v2) + 64개 학과 시드 (idempotent)
-# 기존 v1 DB가 있으면(운영 데이터 보존) 먼저 이관:
-python db/migrate_v2.py    #    kind 컬럼 + FK ON UPDATE CASCADE + portal→scatch_* 개명 (멱등)
-python main.py init        # 2) 부트스트랩: 부팅 재적재 + 1회 크롤 + 요약 드레인 (첫 실행=시딩, 이후=밀린 신규)
-python main.py run --mono  # 3) 상시 + 통합채널 몰빵(개발 확인). 기본은 학과별 채널
-python main.py run --prod  #    운영: 실제 학과채널 + @everyone
-python main.py redo 10     # 4) 임의 10개 학과 '최신 공지 1건' 강제 재요약 (크롤 X, 튜닝용)
+python init/seed_db.py                      # 1) DB 스키마(v4) + 64개 학과 '데이터'만 시드 (idempotent) — 디스코드 채널은 안 만든다
+python -m notify.setup_guild --dry          # 2) (poly 발송 쓸 때) 무엇을 만들지 미리보기
+python -m notify.setup_guild                #    학과별 역할·비공개 채널 + 감시채널 자동 생성 → ID를 DB에 저장
+python main.py once --dst null --nosummary  # 3) 시딩: 크롤 1회로 (제목·url)만 'seeded' 기록 (무발송·무요약)
+python main.py run  --dst poly              # 4) 운영: 상시 크롤 + 각 학과 채널 발송(+@everyone)
+python main.py once --dst mono              # 5) cron 근사: 크롤 1회 → 통합채널 몰빵(개발 확인, MONO_CHANNEL_ID 필요)
+python main.py redo 10 --dst mono           # 6) 임의 10개 학과 '최신 공지 1건' 강제 재요약 (크롤 X, 튜닝용)
+python main.py query "수강신청" --dst mono   # 7) 제목 검색 → 선택 → [재처리 | DB에서 제거]
 ```
 
-### 모드(무엇을) 와 라우팅(어디로) — 직교 축
+> **채널은 누가 만드나?** `init/seed_db.py` 는 학과 **데이터**(셀렉터·이름·kind)만 넣는다 — 디스코드 채널/역할은 **안** 만든다.
+> 채널·역할 생성은 `python -m notify.setup_guild` 몫이다. 이게 학과별 채널ID를 `depts` 에, 감시채널ID를 `app_meta` 에 저장한다.
+> 그래서 **`--dst poly` 는 setup_guild 를 먼저 돌려야** 각 학과 채널로 간다(안 돌리면 채널ID가 비어 통합채널로 폴백되고 경고 로그가 뜬다).
+> **첫 세팅에 사람이 넣는 값은 봇 토큰 + `DISCORD_GUILD_ID` 둘뿐** — 나머지 채널ID는 setup_guild 가 채운다.
+
+### 모드(무엇을) 와 `--dst`(어디로) — 직교 축
 
 **모드:**
-- `init` : 부팅 재적재 → 크롤 1회 → 요약 드레인 → 종료. 첫 실행은 `seen` 시딩(무발송), 이후는 밀린 신규 처리. (정적 스키마·학과 시드는 `init/seed_db.py` 로 별개)
-- `run`  : 워커 상시 + `CRAWL_INTERVAL_SEC`(기본 600s)마다 크롤 반복.
-- `redo N` (별칭 `debug N`) : 임의 N개 학과 최신 공지 1건을 `seen`에서 지워 **신규처럼 재요약**·발송. 크롤 X. 기본 10 (`redo 0` = 0건).
+- `run`  : 워커 상시 + `CRAWL_INTERVAL_SEC`(기본 600s)마다 크롤 반복. (기본 모드)
+- `once` : 부팅 재적재 → 크롤 1회 → 요약 드레인 → 종료. cron에 걸면 실서비스 근사.
+- `redo N` : 임의 N개 학과 최신 공지 1건을 `notices`에서 지워 **신규처럼 재처리**·발송. 크롤 X. 기본 10 (`redo 0` = 0건).
+- `query "검색어"` : 제목에 검색어가 든 공지(시딩분 포함) 검색 → 번호 선택 → [1] 재처리 / [2] DB에서 제거.
 
-**라우팅 플래그(모드와 무관, 직교):**
-- ① 길드: 기본 **디버그 서버**, `--prod` 만 실서비스.
-- ② 채널: 기본 **학과별 채널**, `--mono` 면 **통합채널 하나로 몰빵**(`config.MONO_CHANNEL_ID`).
-- ③ 전송: `--dryrun` 이면 전송 안 함(로그만).
-- `@everyone` 은 **실서비스(비-mono·`--prod`)** 일 때만. 디버그/모노는 무멘션.
+**`--dst`(전송 대상, 택1, 기본 `null`):**
+- `null`(기본) : 전송 안 함(구 dryrun). 처리·요약은 하되 디스코드로 안 보냄.
+- `mono` : 사전지정 **통합채널**(`config.MONO_CHANNEL_ID`) 하나로 몰빵(무멘션).
+- `poly` : **각 학과 전용 채널**로 발송(+`@everyone`).
+- `<채널ID>` : 명시한 단일 채널로(무멘션).
 
-`config.DEBUG_EN`(길드 축)은 `--prod`만 끈다. config.json엔 두지 않는다(실행 플래그로 제어).
-빠른 개발 확인은 `run --mono`(통합채널) 권장 — 학과별 비공개 채널은 봇에 접근권한 필요.
+**`--nosummary`(직교 플래그):** 요약(+상세 fetch) 생략. `--dst null` 과 함께면 **순수 시딩**, 발송 대상과 함께면 **제목+링크만** 발송(자원 절약).
+
+빠른 개발 확인은 `--dst mono`(통합채널) 권장 — 학과별 비공개 채널은 봇에 접근권한 필요.
 
 `.db` 확인: VSCode 무료 확장 **SQLite Viewer**(qwtel.sqlite-viewer)로 `db/notice.db` 더블클릭,
 또는 쿼리용 **SQLite**(alexcvzz.vscode-sqlite).
 
-`DRY_RUN=true`(또는 봇 토큰 없음)면 디스코드 전송 대신 로그만 → 안전한 테스트.
-`DEBUG_EN=true`면 학과채널 대신 감시채널로 발송.
+`--dst null`(기본) 또는 봇 토큰 없음이면 디스코드 전송 대신 로그만 → 안전한 테스트.
+발송처는 `--dst mono|poly|<채널ID>` 로 선택(위 라우팅 표 참고).
 
 ## 테스트 (오프라인, 네트워크/실LLM 불필요)
 
@@ -57,7 +65,7 @@ python main.py redo 10     # 4) 임의 10개 학과 '최신 공지 1건' 강제 
 python tests/run_tests.py
 ```
 
-픽스처 + 모의 LLM 서버로 검증: 크롤 파싱 · 차집합/시딩/UPDATE_LIMIT · LLM 클라이언트(정상·거절감지·E2B→E4B 승격) · run_once end-to-end(임시 DB에 공지 요약 저장). **현재 20/20 통과.**
+픽스처 + 모의 LLM 서버로 검증: 크롤 파싱 · 차집합/시딩/UPDATE_LIMIT · LLM 클라이언트(정상·거절감지·E2B→E4B 승격) · run_once end-to-end(임시 DB에 공지 요약 저장) · `--dst` 인자 파싱/채널 라우팅. **현재 59/59 통과.**
 
 ## LLM 런타임 (OlliteRT) 참고
 
@@ -74,10 +82,11 @@ python tests/run_tests.py
 
 ```
 config.py          런타임 설정(env > secrets/config.json > 기본값)
-main.py            진입점(once | run)
+main.py            진입점(run | once | redo | query, --dst/--nosummary)
 pipeline.py        오케스트레이션(crawl_pass / run_once / Components)
+devtools.py        redo(강제 재요약) / query(검색→재처리·삭제)
 db/
-  schema.sql       SQLite 스키마 6테이블
+  schema.sql       SQLite 스키마 5테이블(notices 단일화)
   store.py         DB 접근계층(스레드안전)
   notice.db        생성 결과(gitignore)
 init/
@@ -104,7 +113,7 @@ tests/
 ## 동작 흐름
 
 1. **스케줄러(10분)** → `crawl_pass`: 전 학과 크롤 → `diff` 차집합 신규 감지.
-2. 신규 → 콘텐츠 fetch → `notices`(status=detected) → **디스코드 즉시 발송**(제목+링크+@everyone, status=notified) → 요약 큐 적재.
+2. 신규 → (제목·url) `seeded` 기록 → 콘텐츠 fetch → `notices`(status=detected) → (발송 대상이면)**디스코드 즉시 발송**(제목+링크, poly면 +@everyone, status=notified) → 요약 큐 적재.
 3. **요약 워커**: 큐에서 인터럽트식 기상 → (이미지 시 OCR) → LLM 요약(Semaphore로 동시성 제한) → DB 기록 → **디스코드 메시지 edit로 요약 삽입**(status=done).
 4. 요약 실패 = 요약만 포기(알림은 유지). Clova 폴백(옵션) 시 감시채널 로그.
 
@@ -118,7 +127,8 @@ python -m notify.setup_guild           # 활성 학과별 역할+비공개채널
 python -m notify.discord_bot           # 구독 봇 상주(게이트웨이)
 ```
 
-- `setup_guild.py` — 학과별 **역할 + 비공개 채널**(단과대 카테고리 아래, 역할 보유자만 열람) 생성. idempotent.
+- `setup_guild.py` — 학과별 **역할 + 비공개 채널**(단과대 카테고리 아래, 역할 보유자만 열람) 생성 + **감시(디버그) 채널 자동 생성**(이름 `DEBUG_CHANNEL_NAME`, 기본 `사우론-감시`) → 그 ID를 `app_meta` 에 저장. **이름으로 실존 확인**하므로 재실행해도 중복 안 만들고 재사용. idempotent.
+  - 즉 감시채널 ID를 손으로 안 넣어도 된다(수동 지정은 `DEBUG_CHANNEL_ID`). 통합채널(`--dst mono`)만 curation 대상이라 `MONO_CHANNEL_ID`(또는 `--dst <채널ID>`)로 명시한다.
 - `discord_bot.py` — `/구독` → **3단계**(kind 기준): ① **공통**(scatch 전교공지, 한 화면·학사 강조) → ② **전공**(단과대→학과, `← 다른 단과대`로 여러 단과대 반복) → ③ **기타**. 각 Select 선택은 **즉시** 역할 부여/회수 + DB 반영(부분드롭 방지). 완료 시 현황 임베드. 전부 ephemeral.
   - 다전공·공통 동시 구독을 /구독 **한 번**으로 처리(단계 분리 + 루프백 버튼). 임베드 스타일은 `docs/embed_gallery.html` H·I·J·K.
 - `kind`(general/major/etc)는 `depts` 컬럼이 단일 기준(프리픽스 규칙 의존 X). general=scatch 포털 8종, major=단과대 소속, etc=그 외.

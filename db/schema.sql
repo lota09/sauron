@@ -37,42 +37,38 @@ CREATE TABLE IF NOT EXISTS depts (
 );
 
 -- ─────────────────────────────────────────────────────────────
--- 차집합용 "기억" (sauron buffers/last-*.txt 대체)
---   [새 크롤 URL] − [여기 저장된 URL] = [신규]
---   URL 키라서 고정공지·순서꼬임을 자동 흡수 (BOLD 판별 불요)
--- ─────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS seen_notices (
-  dept_id       TEXT NOT NULL REFERENCES depts(dept_id) ON DELETE CASCADE ON UPDATE CASCADE,
-  url           TEXT NOT NULL,
-  first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (dept_id, url)
-);
-
--- ─────────────────────────────────────────────────────────────
--- 공지 처리 큐 겸 아카이브
---   상태 흐름: detected → notified → summarizing → done | summary_failed
---   (알림/요약 분리: notified 시점에 이미 디스코드 발송 완료, message edit로 요약 삽입)
+-- 공지 = 차집합 "기억" + 처리 레코드 통합 (구 seen_notices + notices)
+--   상태 흐름: seeded → detected → notified → summarizing → done | summary_failed | no_content
+--     · seeded   = 목록에서 (제목·url)만 기억(무발송·무요약). 차집합의 "본 것".
+--     · detected = 신규 감지 후 상세 fetch 완료.
+--     · notified = 디스코드 D1(제목+링크) 발송 완료.
+--     · done/…   = 요약 edit 완료 등.
+--   차집합: [새 크롤 url] − [notices의 (dept_id,url)] = [신규]. UNIQUE(dept_id,url).
+--   (제목까지 기억하므로 시딩 공지도 query 검색 가능. 내용/이미지는 처리 시에만 채움 → 자원 절약.)
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS notices (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   dept_id            TEXT NOT NULL REFERENCES depts(dept_id) ON DELETE CASCADE ON UPDATE CASCADE,
   title              TEXT NOT NULL,
-  url                TEXT NOT NULL UNIQUE,
-  content_raw        TEXT,                  -- 정제된 본문 HTML/텍스트
+  url                TEXT NOT NULL,
+  content_raw        TEXT,                  -- 정제된 본문(처리 시). seeded면 NULL
   images_json        TEXT,                  -- '[{"url":...,"filename":...}]'
   ocr_text           TEXT,                  -- OCR 결과(있을 때)
   summary            TEXT,                  -- 요약 결과(있을 때)
-  summary_engine     TEXT,                  -- 'gemma_e2b'|'gemma_e4b'|'clova'|NULL
+  summary_engine     TEXT,                  -- 'Gemma-…' | 'vision:…' | NULL
   fail_reason        TEXT,                  -- 실패/내용없음 사유(사후 분석용). 성공 시 NULL
-  status             TEXT NOT NULL DEFAULT 'detected',
+  status             TEXT NOT NULL DEFAULT 'seeded',
   discord_channel_id TEXT,                  -- 실제 발송된 채널
   discord_message_id TEXT,                  -- edit 대상 메시지
-  created_at         TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at         TEXT
+  first_seen_at      TEXT NOT NULL DEFAULT (datetime('now')),  -- 최초 기억(차집합)
+  created_at         TEXT,                  -- 처리(promote) 시각
+  updated_at         TEXT,
+  UNIQUE(dept_id, url)                      -- 차집합 키(학과별). 같은 url을 두 학과가 공유 허용
 );
 
-CREATE INDEX IF NOT EXISTS idx_notices_status  ON notices(status);   -- 부팅 시 미완 재적재
-CREATE INDEX IF NOT EXISTS idx_notices_dept    ON notices(dept_id);
+CREATE INDEX IF NOT EXISTS idx_notices_status ON notices(status);   -- 부팅 시 미완 재적재
+CREATE INDEX IF NOT EXISTS idx_notices_dept   ON notices(dept_id);
+CREATE INDEX IF NOT EXISTS idx_notices_url    ON notices(url);      -- 차집합/검색
 
 -- ─────────────────────────────────────────────────────────────
 -- 구독 (원본 기록; 실제 노출 게이팅은 디스코드 역할)
@@ -99,4 +95,4 @@ CREATE TABLE IF NOT EXISTS app_meta (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
-INSERT OR IGNORE INTO app_meta(key, value) VALUES ('schema_version', '3');
+INSERT OR IGNORE INTO app_meta(key, value) VALUES ('schema_version', '4');  -- v4: notices 단일 테이블(seen 통합)

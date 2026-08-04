@@ -3,7 +3,7 @@
 crawl/diff.py — 신규 공지 감지 (URL 차집합) + 최초 시딩 + UPDATE_LIMIT 가드.
 
 sauron Overview.py/Update.py 계승:
-  [새 크롤 URL] − [seen_notices] = [신규]  (URL 키 → 고정공지/순서꼬임 자동 흡수)
+  [새 크롤 URL] − [기억된 notices URL] = [신규]  (URL 키 → 고정공지/순서꼬임 자동 흡수)
 
 detect_new():
   - 미시딩 학과: seed_pages 페이지 URL 전량을 seen에 등록(무알림) 후 [] 반환.
@@ -48,11 +48,9 @@ def detect_new(store, fetcher, dept):
     if not scraped:
         raise FetchEmpty(f"{dept_id}: 가져올 공지가 없음")
 
-    all_urls = [it["url"] for it in scraped]
-
-    # 최초 시딩: 전량 기억, 무알림
+    # 최초 시딩: 전량 기억('seeded'), 무알림
     if not seeded:
-        store.mark_seen(dept_id, all_urls)
+        store.seed_rows(dept_id, scraped)
         store.set_seeded(dept_id)
         return []
 
@@ -61,9 +59,9 @@ def detect_new(store, fetcher, dept):
     new_items = [it for it in reversed(scraped) if it["url"] not in seen]
 
     if len(new_items) > config.UPDATE_LIMIT:
-        store.mark_seen(dept_id, all_urls)   # 상태는 전진시켜 다음 런 반복 방지
+        store.seed_rows(dept_id, scraped)    # 전량 'seeded'로 전진시켜 다음 런 반복 방지
         raise TooManyNew(len(new_items))
 
     if new_items:
-        store.mark_seen(dept_id, [it["url"] for it in new_items])
+        store.seed_rows(dept_id, new_items)  # 신규를 'seeded'로 기억 → _process_new_item이 승격
     return new_items

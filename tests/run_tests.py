@@ -163,6 +163,24 @@ def test_fetcher_parse():
           str(detail["images"]))
 
 
+def test_image_multi_extract():
+    print("[test] 이미지 다중 추출(_1/_2/_3 붙임 구분 + 리사이즈 변형 병합)")
+    f = Fetcher()
+    # 붙임 3장(_1,_2,_3). _3만 -1568x2216 리사이즈 변형/ srcset 보유(실제 scatch 패턴 근사).
+    html = ('<div>'
+            '<img src="https://x/up/notice_1.png">'
+            '<img src="https://x/up/notice_2.png">'
+            '<img src="https://x/up/notice_3-1568x2216.png" '
+            'srcset="https://x/up/notice_3-768x1086.png 768w, https://x/up/notice_3-1568x2216.png 1568w">'
+            '</div>')
+    imgs = f._extract_images(html, "https://x/notice/view")
+    urls = sorted(i["url"] for i in imgs)
+    check("붙임 3개 모두 추출(_1/_2/_3)", len(imgs) == 3, str(urls))
+    check("_1 보존", any(u.endswith("notice_1.png") for u in urls), str(urls))
+    check("_2 보존", any(u.endswith("notice_2.png") for u in urls), str(urls))
+    check("_3 리사이즈 변형은 1장으로 병합", sum("notice_3" in u for u in urls) == 1, str(urls))
+
+
 def test_diff_seed_new_limit():
     print("[test] 차집합 · 시딩 · UPDATE_LIMIT")
     store, path = temp_store([DEPT])
@@ -232,22 +250,24 @@ def test_run_once_e2e():
     c = Components(
         store=store, fetcher=fake, ocr=get_ocr("none"),
         summarizer=OpenAICompatSummarizer(base_url=base, model="test-e2b"),
-        notifier=Notifier(), queue=WorkQueue(max_concurrency=1), clova=None)
+        notifier=Notifier(dst="mono"), queue=WorkQueue(max_concurrency=1), clova=None)
 
-    asyncio.run(run_once(c))  # 1회차: 시딩 → 공지 0
-    check("시딩회차 notices 0", len(store.recent_notices()) == 0, "")
+    asyncio.run(run_once(c))  # 1회차: 전량 'seeded'(무발송)
+    seeded = store.recent_notices()
+    check("시딩회차 seeded 2", len(seeded) == 2 and all(r["status"] == "seeded" for r in seeded),
+          f"{[(r['url'], r['status']) for r in seeded]}")
 
-    # 신규 2건 추가 후 재실행
+    # 신규 2건 추가 후 재실행 → 처리
     fake.list_map["testdept"] = [{"title": "새 공지 A", "url": "http://x/A"},
                                  {"title": "새 공지 B", "url": "http://x/B"}] + base_items
     c.queue = WorkQueue(max_concurrency=1)
     asyncio.run(run_once(c))
     rows = store.recent_notices()
     done = [r for r in rows if r["status"] == "done"]
-    check("신규 2건 저장", len(rows) == 2, f"got {len(rows)}")
-    check("요약 완료 상태", len(done) == 2, f"done {len(done)}")
+    check("전체 4행(seeded2+done2)", len(rows) == 4, f"got {len(rows)}")
+    check("신규 2건 요약완료", len(done) == 2, f"done {len(done)}")
     check("요약문 존재", all(r["summary"] for r in done), "")
-    check("discord dry message_id 기록", all(r["discord_message_id"] for r in rows), "")
+    check("done에 message_id 기록", all(r["discord_message_id"] for r in done), "")
     srv.shutdown(); store.close(); os.remove(path)
 
 
@@ -262,8 +282,10 @@ def test_debug_resummarize():
         store=store, fetcher=fake, ocr=get_ocr("none"),
         summarizer=OpenAICompatSummarizer(base_url=base, model="test-e2b"),
         notifier=Notifier(), queue=WorkQueue(max_concurrency=1), clova=None)
-    asyncio.run(run_once(c))                       # 시딩
-    check("시딩 후 notices 0", len(store.recent_notices()) == 0, "")
+    asyncio.run(run_once(c))                       # 시딩(통합테이블: 전량 'seeded' 행)
+    seeded = store.recent_notices()
+    check("시딩 후 seeded 3", len(seeded) == 3 and all(r["status"] == "seeded" for r in seeded),
+          f"{[(r['url'], r['status']) for r in seeded]}")
     c.queue = WorkQueue(max_concurrency=1)
     asyncio.run(debug_resummarize(c, 1))           # 최신 1건 강제 재요약
     rows = store.recent_notices()
@@ -334,30 +356,34 @@ def test_refusal_precision():
     srv.shutdown()
 
 
-def test_debug_routing():
-    print("[test] DEBUG/DRYRUN 라우팅")
+def test_dst_routing():
+    print("[test] --dst 인자 파싱 · 채널 라우팅")
     import main
-    check("redo 10(=debug 별칭)", main._parse_args(["m", "debug", "10"]) == ("redo", 10, None, False, False, False, False), "")
-    check("redo 10 --dryrun", main._parse_args(["m", "redo", "10", "--dryrun"]) == ("redo", 10, None, True, False, False, False), "")
-    check("run --debug", main._parse_args(["m", "run", "--debug"]) == ("run", None, None, False, True, False, False), "")
-    check("run --prod", main._parse_args(["m", "run", "--prod"]) == ("run", None, None, False, False, True, False), "")
-    check("init 모드", main._parse_args(["m", "init"])[0] == "init", "")
-    check("run --mono", main._parse_args(["m", "run", "--mono"])[6] is True, "")
-    check("redo 검색어", main._parse_args(["m", "redo", "수강신청"])[2] == "수강신청", "")
-    # 라우팅: --mono=통합채널 몰빵 / 비mono=학과채널(@everyone은 실서비스만)
-    nmono = Notifier(mono=True, dry_run=True)
-    chm, mm = nmono._resolve_channel({"discord_channel_id": "REAL"})
-    check("mono→통합채널·무멘션", chm == config.MONO_CHANNEL_ID and mm == "", chm)
-    ndbg = Notifier(debug=True, mono=False, dry_run=True)
-    chd, md = ndbg._resolve_channel({"discord_channel_id": "REAL"})
-    check("debug(비mono)→dept채널·무멘션", chd == "REAL" and md == "", chd)
-    nprod = Notifier(debug=False, mono=False, dry_run=True)
-    chp, mp = nprod._resolve_channel({"discord_channel_id": "REAL"})
-    check("prod→dept채널·@everyone", chp == "REAL" and mp == "@everyone", chp)
-    check("guild: debug→디버깅서버", config.active_guild_id(True) == config.DEBUG_GUILD_ID, "")
-    check("guild: prod→실서비스서버", config.active_guild_id(False) == config.PROD_GUILD_ID, "")
-    check("debug_from_argv --prod", config.debug_from_argv(["m", "--prod"]) is False, "")
-    check("debug_from_argv --debug", config.debug_from_argv(["m", "--debug"]) is True, "")
+    P = main._parse_args
+    # 파싱: 반환 (mode, num, query, dst, nosummary)
+    check("run 기본(dst null)", P(["m", "run"]) == ("run", None, None, "null", False), str(P(["m", "run"])))
+    check("dst 미지정→null", P(["m", "once"]) == ("once", None, None, "null", False), str(P(["m", "once"])))
+    check("once --dst null --nosummary(=시딩)",
+          P(["m", "once", "--dst", "null", "--nosummary"]) == ("once", None, None, "null", True), "")
+    check("once --dst poly", P(["m", "once", "--dst", "poly"]) == ("once", None, None, "poly", False), "")
+    check("--dst=mono 등호형", P(["m", "run", "--dst=mono"]) == ("run", None, None, "mono", False), "")
+    check("redo 4 --dst mono", P(["m", "redo", "4", "--dst", "mono"]) == ("redo", 4, None, "mono", False), "")
+    check("redo 0 명시(0 존중)", P(["m", "redo", "0"]) == ("redo", 0, None, "null", False), str(P(["m", "redo", "0"])))
+    check("채널ID 직접 지정",
+          P(["m", "run", "--dst", "1530567154473373837"]) == ("run", None, None, "1530567154473373837", False), "")
+    check("query 검색어", P(["m", "query", "수강신청", "--dst", "mono"]) == ("query", None, "수강신청", "mono", False), "")
+    # 라우팅: dst별 (channel, mention)
+    dept = {"discord_channel_id": "REAL"}
+    chp, mp = Notifier(dst="poly")._resolve_channel(dept)
+    check("poly→학과채널·@everyone", chp == "REAL" and mp == "@everyone", f"{chp}/{mp}")
+    chm, mm = Notifier(dst="mono")._resolve_channel(dept)
+    check("mono→통합채널·무멘션", chm == config.MONO_CHANNEL_ID and mm == "", f"{chm}/{mm}")
+    chid, mid = Notifier(dst="1530567154473373837")._resolve_channel(dept)
+    check("채널ID→해당채널·무멘션", chid == "1530567154473373837" and mid == "", f"{chid}/{mid}")
+    chn, _ = Notifier(dst="null")._resolve_channel(dept)
+    check("null→채널없음", chn is None, str(chn))
+    check("null send_enabled False", Notifier(dst="null").send_enabled is False, "")
+    check("mono send_enabled True", Notifier(dst="mono").send_enabled is True, "")
 
 
 def test_subscribe_logic():
@@ -392,14 +418,20 @@ def test_subscribe_logic():
     store.set_dept_discord("cse", channel_id="C9", role_id="R9")
     d = store.get_dept("cse")
     check("채널/역할 ID 저장", d["discord_channel_id"] == "C9" and d["discord_role_id"] == "R9", "")
+    # app_meta 라운드트립(setup_guild 자동생성 감시채널ID 저장 경로)
+    check("get_meta 기본값", store.get_meta("debug_channel_id", "X") == "X", "")
+    store.set_meta("debug_channel_id", "1234567890")
+    check("set/get_meta 저장", store.get_meta("debug_channel_id") == "1234567890", "")
+    store.set_meta("debug_channel_id", "999")  # upsert 덮어쓰기
+    check("set_meta upsert", store.get_meta("debug_channel_id") == "999", "")
     store.close(); os.remove(path)
 
 
 if __name__ == "__main__":
-    for t in (test_fetcher_parse, test_diff_seed_new_limit, test_llm_client,
+    for t in (test_fetcher_parse, test_image_multi_extract, test_diff_seed_new_limit, test_llm_client,
               test_run_once_e2e, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
-              test_subscribe_logic, test_debug_routing):
+              test_subscribe_logic, test_dst_routing):
         try:
             t()
         except Exception as e:

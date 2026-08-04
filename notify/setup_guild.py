@@ -116,8 +116,22 @@ async def run(gid):
                 if ch and str(d.get("discord_channel_id") or "") != str(ch.id):
                     store.set_dept_discord(did, channel_id=str(ch.id))   # DB 동기화
 
+            # ── 감시(디버그) 채널: 이름으로 자동 생성/재사용 → app_meta에 ID 저장 ──
+            #    학과채널과 달리 역할 게이팅 없음(관리자용). 첫 세팅 시 사람이 채널ID를 안 넣어도 되게.
+            dbg_name = config.DEBUG_CHANNEL_NAME
+            dbg = chs_by_name.get(_norm_ch(dbg_name)) or chs_by_name.get(dbg_name)
+            if dbg is None:
+                print(f"[감시채널 생성] {dbg_name}" + (" (dry)" if DRY else ""))
+                if not DRY:
+                    dbg = await guild.create_text_channel(dbg_name, reason="sauron 감시/디버그 채널")
+            else:
+                print(f"[감시채널 존재·재사용] {dbg.name} (id={dbg.id})")
+            if dbg and not DRY:
+                store.set_meta("debug_channel_id", str(dbg.id))   # main이 여기서 읽어 Notifier에 주입
+
             store.checkpoint()
             print(f"[완료] 역할 생성 {created_r}·재사용 {reused_r} / 채널 생성 {created_c}·재사용 {reused_c}"
+                  + (f" / 감시채널 {'준비됨' if dbg else '-'}")
                   + (" (dry-run: 실제 생성 없음)" if DRY else ""))
         except Exception as e:
             print(f"[오류] {e}")

@@ -2,9 +2,9 @@
 """
 pipeline.py — 오케스트레이션.
 
-Components: 주입 가능한 구성요소 묶음(테스트에서 fake 교체).
-crawl_pass(): 전 학과 크롤 → 차집합 → (신규) 콘텐츠 fetch → DB insert → 디스코드 발송(D1) → 큐 적재.
-run_once():   부팅 재적재 + 1회 크롤 + 큐 드레인 (테스트/수동실행).
+Components: 주입 가능한 구성요소 묶음(테스트에서 fake 교체). nosummary 플래그로 처리 깊이 조절.
+crawl_pass(): 전 학과 크롤 → 차집합 → (신규) seeded 기록 → 처리(발송/요약).
+run_once():   부팅 재적재 + 1회 크롤 + 큐 드레인. --nosummary면 요약·재적재 생략(=시딩류).
 """
 import asyncio
 import json
@@ -21,7 +21,8 @@ def _label(dept):
 
 
 class Components:
-    def __init__(self, store, fetcher, ocr, summarizer, notifier, queue, clova=None, logger=None):
+    def __init__(self, store, fetcher, ocr, summarizer, notifier, queue,
+                 clova=None, logger=None, nosummary=False):
         self.store = store
         self.fetcher = fetcher
         self.ocr = ocr
@@ -30,29 +31,45 @@ class Components:
         self.queue = queue
         self.clova = clova
         self.logger = logger
+        self.nosummary = bool(nosummary)   # 요약(+상세fetch) 생략
 
     def log(self, msg):
         (self.logger.info if self.logger else print)(msg)
 
 
 async def _process_new_item(c, dept, item):
-    """신규 1건: 콘텐츠 fetch → insert → 발송 → 큐 적재."""
-    detail = await asyncio.to_thread(c.fetcher.fetch_content, dept, item["url"])
-    images_json = json.dumps(detail.get("images") or [], ensure_ascii=False)
-    notice_id = await asyncio.to_thread(
-        c.store.insert_notice, dept["dept_id"], item["title"], item["url"],
-        detail.get("content"), images_json)
-    if notice_id is None:
-        return None  # url 중복(이미 있음)
-    notice = await asyncio.to_thread(c.store.get_notice, notice_id)
-    # D1: 감지 즉시 발송(제목+링크). 실패해도 요약큐는 태움.
-    try:
-        channel_id, message_id = await asyncio.to_thread(c.notifier.send_new, notice, dept)
-        await asyncio.to_thread(c.store.set_notified, notice_id, channel_id, message_id)
-    except Exception as e:
-        c.log(f"[발송 실패] {item['title'][:30]}: {e}")
-    await c.queue.put(notice_id)
-    return notice_id
+    """신규 1건 처리. --nosummary / 발송여부(dst)에 따라 깊이 조절.
+      · nosummary + 발송안함(dst null): 순수 시딩 → 'seeded' 유지, 처리 안 함.
+      · nosummary + 발송함:            상세fetch 생략, D1(제목+링크)만 발송.
+      · 요약함:                        상세fetch → (발송 시)D1 → 요약큐.
+    """
+    nosummary = c.nosummary
+    send = c.notifier.send_enabled          # 보낼 의사(dst != null)
+    if nosummary and not send:
+        return None                         # 순수 시딩(이미 seed_rows로 'seeded' 기록됨)
+
+    if nosummary:
+        content = images_json = None        # 내용은 요약에만 필요 → 생략(자원 절약)
+    else:
+        detail = await asyncio.to_thread(c.fetcher.fetch_content, dept, item["url"])
+        content = detail.get("content")
+        images_json = json.dumps(detail.get("images") or [], ensure_ascii=False)
+
+    nid = await asyncio.to_thread(
+        c.store.promote_notice, dept["dept_id"], item["title"], item["url"], content, images_json)
+    if nid is None:
+        return None
+
+    if send:                                # 발송 대상(dst != null)
+        notice = await asyncio.to_thread(c.store.get_notice, nid)
+        try:
+            channel_id, message_id = await asyncio.to_thread(c.notifier.send_new, notice, dept)
+            await asyncio.to_thread(c.store.set_notified, nid, channel_id, message_id)
+        except Exception as e:
+            c.log(f"[발송 실패] {item['title'][:30]}: {e}")
+    if not nosummary:
+        await c.queue.put(nid)              # 요약 워커로
+    return nid
 
 
 async def crawl_pass(c):
@@ -74,43 +91,25 @@ async def crawl_pass(c):
             c.notifier.debug(f"크롤 실패: {_label(dept)}\n{e}")
             continue
 
+        total_new += len(new_items)
         for item in new_items:
             try:
-                nid = await _process_new_item(c, dept, item)
-                if nid:
-                    total_new += 1
+                await _process_new_item(c, dept, item)
             except Exception as e:
                 c.log(f"[신규처리 실패] {_label(dept)} {item.get('title','')[:30]}: {e}")
-    c.log(f"[crawl_pass] 신규 {total_new}건 감지·적재")
+    c.log(f"[crawl_pass] 신규 {total_new}건 감지"
+          + ("(시딩만)" if (c.nosummary and not c.notifier.send_enabled) else "·처리"))
     return total_new
 
 
 async def run_once(c):
-    """부팅 재적재 + 1회 크롤 + 큐 드레인."""
+    """부팅 재적재 + 1회 크롤 + 큐 드레인. --nosummary면 요약·재적재 생략."""
     from summarize.worker import drain
-    n = c.queue.requeue_pending(c.store)
-    if n:
-        c.log(f"[부팅 재적재] 미완 요약 {n}건")
+    if not c.nosummary:
+        n = c.queue.requeue_pending(c.store)
+        if n:
+            c.log(f"[부팅 재적재] 미완 요약 {n}건")
     await crawl_pass(c)
-    await drain(c)
-
-
-async def seed_all(c):
-    """init 전용: 전 학과 '목록만' 긁어 현재 URL 전량을 seen에 등록(무발송·무요약·무LLM).
-    최초 부트스트랩/베이스라인 리셋. 긴 런타임·스팸 없이 '지금 게시된 것은 모두 본 것으로' 처리."""
-    from crawl.diff import _scrape_pages
-    depts = await asyncio.to_thread(c.store.active_depts)
-    ok = urls_total = 0
-    for dept in depts:
-        try:
-            pages = int(dept.get("seed_pages") or config.SEED_PAGES)
-            items = await asyncio.to_thread(_scrape_pages, c.fetcher, dept, pages)
-            urls = [it["url"] for it in items]
-            await asyncio.to_thread(c.store.mark_seen, dept["dept_id"], urls)
-            await asyncio.to_thread(c.store.set_seeded, dept["dept_id"])
-            ok += 1
-            urls_total += len(urls)
-        except Exception as e:
-            c.log(f"[시드 실패] {_label(dept)}: {e}")
+    if not c.nosummary:
+        await drain(c)
     c.store.checkpoint()
-    c.log(f"[init 완료] {ok}/{len(depts)} 학과 · {urls_total} URL 기억(무발송)")

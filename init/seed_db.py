@@ -11,7 +11,7 @@ init/seed_db.py  —  DB 초기화 + 학과 시드 (idempotent)
     * discord_channel_id / role_id 는 시드가 비어있으면 기존값 보존
       (채널 자동생성 단계에서 채워진 값을 덮어쓰지 않음)
     * active / seeded_at 는 운영 중 변경분 보존(건드리지 않음)
-- 여러 번 실행해도 seen_notices/notices/subscriptions 등 운영 데이터는 그대로.
+- 여러 번 실행해도 notices/subscriptions 등 운영 데이터는 그대로.
 
 개발=Windows x86, 타겟=ARM(chroot/proot). 표준 라이브러리만 사용.
 """
