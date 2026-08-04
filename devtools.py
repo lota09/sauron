@@ -75,3 +75,41 @@ def _find_notice_by_url(store, url):
     with store._lock:
         r = store._con.execute("SELECT * FROM notices WHERE url=? ORDER BY id DESC LIMIT 1", (url,)).fetchone()
     return dict(r) if r else None
+
+
+async def redo_search(c, query: str):
+    """제목에 query가 든 공지들을 검색·나열 → 하나 선택 → 저장된 콘텐츠로 재요약·재발송.
+    크롤 없이 이미 수집된 notices를 대상으로 함(프롬프트/비전 테스트용). 예: main.py redo "수강신청"."""
+    rows = await asyncio.to_thread(c.store.search_notices, query)
+    if not rows:
+        c.log(f"[redo] '{query}' 검색 결과 없음 (notices 테이블에 수집된 것만 검색됨)")
+        return
+    print()
+    for i, r in enumerate(rows, 1):
+        dept = await asyncio.to_thread(c.store.get_dept, r["dept_id"]) or {}
+        name = dept.get("name_ko") or r["dept_id"]
+        print(f"[{i}] {name}({r['dept_id']}) | \"{r['title']}\"")
+    try:
+        sel = input(f"\n공지가 {len(rows)}개 검색되었습니다. 디버깅할 공지를 선택하세요. (1-{len(rows)}) : ").strip()
+        pick = rows[int(sel) - 1]
+    except (ValueError, IndexError, EOFError):
+        c.log("[redo] 선택 취소/오류")
+        return
+    await _reprocess_notice(c, pick["id"])
+
+
+async def _reprocess_notice(c, notice_id: int):
+    """저장된 공지를 재처리: 상태 초기화 → D1 재발송(현재 라우팅=mono 등) → 재요약(edit)."""
+    notice = await asyncio.to_thread(c.store.get_notice, notice_id)
+    dept = await asyncio.to_thread(c.store.get_dept, notice["dept_id"]) or {}
+    await asyncio.to_thread(c.store.set_status, notice_id, "detected")
+    try:
+        ch, mid = await asyncio.to_thread(c.notifier.send_new, notice, dept)
+        await asyncio.to_thread(c.store.set_notified, notice_id, ch, mid)
+    except Exception as e:
+        c.log(f"[redo 발송 실패] {e}")
+    await c.queue.put(notice_id)
+    await drain(c)
+    row = await asyncio.to_thread(c.store.get_notice, notice_id)
+    print(f"\n● [{row['status']}/{row['summary_engine'] or '-'}] {notice['title'][:50]}")
+    print(row["summary"] or f"(요약 없음 · fail_reason={row.get('fail_reason')})")

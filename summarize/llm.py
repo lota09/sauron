@@ -223,10 +223,10 @@ class OpenAICompatSummarizer:
         # Gemma엔 system 턴이 없음 → 지시문(config)을 user 메시지에 통합
         return f"{config.LLM_SYSTEM_PROMPT}\n\n{config.LLM_USER_TEMPLATE.format(title=title, body=body)}"
 
-    def _payload(self, model, prompt):
+    def _payload(self, model, messages):
         p = {
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": self.stream,
             "max_tokens": self.max_tokens,
         }
@@ -245,9 +245,9 @@ class OpenAICompatSummarizer:
     _CONN_EXC = (requests.ConnectTimeout, requests.ReadTimeout, requests.ConnectionError,
                  requests.exceptions.ChunkedEncodingError, requests.Timeout)
 
-    def _call(self, model, prompt):
+    def _call(self, model, messages):
         url = f"{self.base_url}/chat/completions"
-        payload = self._payload(model, prompt)
+        payload = self._payload(model, messages)
         if self.stream:
             return self._call_stream(url, payload)
         try:
@@ -304,18 +304,19 @@ class OpenAICompatSummarizer:
         self.model = fetch_loaded_model(self.base_url, min(self.timeout, 15)) or DEFAULT_MODEL
         return self.model
 
-    def summarize(self, title, content_html, ocr_text=None):
-        """요약. 사유별 재시도 정책(config 참조). 최종 실패 시 SummaryError(사유 누적 메시지)."""
-        self.ensure_model()
-        body = html_to_text(content_html)
-        if ocr_text:
-            body += "\n\n[이미지 OCR (오탈자 가능)]\n" + str(ocr_text)
-        if not body.strip():
-            raise EmptyContentError("요약할 본문이 없음")   # #3: LLM 호출 안 함(제목만으론 요약 안 함)
-        base_prompt = self._compose_prompt(title, body)
+    def _generate(self, base_prompt, image_urls=None):
+        """공통 생성+재시도 루프. image_urls(list)가 있으면 멀티모달(다중 이미지) 메시지로 구성.
+        사유별 재시도 정책(config). 최종 실패 시 SummaryError(사유 누적)."""
+        def build(prompt):
+            if image_urls:
+                content = [{"type": "text", "text": prompt}]
+                content += [{"type": "image_url", "image_url": {"url": u}} for u in image_urls]
+            else:
+                content = prompt
+            return [{"role": "user", "content": content}]
 
         def attempt(model, prompt):
-            text, _ = strip_degenerate(self._call(model, prompt))  # 반복 붕괴 제거
+            text, _ = strip_degenerate(self._call(model, build(prompt)))  # 반복 붕괴 제거
             return _validate(text)
 
         model = self.model
@@ -327,9 +328,8 @@ class OpenAICompatSummarizer:
                 return attempt(model, prompt), model
             except ModelNotFoundError as e:
                 reasons.append(f"[model] {e}")
-                # 모델명 오류: 폴백 모델로 교체(재시도 한도 미차감)
                 if self.fallback_model and model != self.fallback_model:
-                    model = self.fallback_model
+                    model = self.fallback_model      # 모델명 오류: 폴백 교체(한도 미차감)
                     continue
                 raise SummaryError(" / ".join(reasons))
             except ConnectionErrorLLM as e:
@@ -343,14 +343,26 @@ class OpenAICompatSummarizer:
                 reasons.append(f"[{e.reason}] {e}")
                 if retries > 0 and not SHUTDOWN.is_set():
                     retries -= 1
-                    # greedy라도 프롬프트에 1토큰만 더해도 그 지점부터 로짓 bias가 바뀌어 출력이 달라짐(리롤).
-                    # 같은(빠른) 모델 유지 + 미세 변형으로 재시도. 폴백 모델이 설정돼 있으면 함께 승격(선택).
-                    used = config.LLM_RETRY_LIMIT - retries          # 1,2,… 재시도마다 변형폭 증가
+                    # greedy라도 프롬프트에 1토큰만 더해도 로짓 bias가 바뀌어 출력이 달라짐(리롤, 실측 입증).
+                    used = config.LLM_RETRY_LIMIT - retries
                     prompt = base_prompt + f"\n\n(한국어로만, 반복 없이 간결히){'.' * used}"
                     if self.fallback_model and model != self.fallback_model:
                         model = self.fallback_model
                     continue
                 raise SummaryError(" / ".join(reasons))
+
+    def summarize(self, title, content_html, ocr_text=None, image_urls=None):
+        """요약. 텍스트 프롬프트 하나에 (있으면) 이미지를 함께 첨부해 넘긴다(비전 전용 프롬프트 X).
+        본문·OCR·이미지가 모두 없을 때만 EmptyContentError. engine은 이미지 첨부 시 'vision:<model>×N'."""
+        self.ensure_model()
+        content_body = html_to_text(content_html)
+        has_text = bool((content_body + (ocr_text or "")).strip())
+        if not has_text and not image_urls:
+            raise EmptyContentError("본문·OCR·이미지 모두 없음")
+        body = content_body + (f"\n\n[이미지 OCR (오탈자 가능)]\n{ocr_text}" if ocr_text else "")
+        text, model = self._generate(self._compose_prompt(title, body), image_urls=image_urls or None)
+        engine = f"vision:{model}×{len(image_urls)}" if image_urls else model
+        return text, engine
 
 
 class ClovaSummarizer:

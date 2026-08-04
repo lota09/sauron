@@ -37,10 +37,11 @@ def _load_token():
 
 
 class Notifier:
-    def __init__(self, logger=None, debug=None, dry_run=None):
+    def __init__(self, logger=None, debug=None, dry_run=None, mono=None):
         self.token = _load_token()
         self.logger = logger
-        self.debug_mode = config.DEBUG_EN if debug is None else debug   # True: 가짜 개발채널로
+        self.debug_mode = config.DEBUG_EN if debug is None else debug   # True: 디버그 서버로
+        self.mono = bool(mono)                        # True: 모든 공지를 통합채널 하나로 몰빵
         self.dry = bool(dry_run) or not self.token   # 전송 안 함(--dryrun) 또는 토큰 없음
         self._fake = 0
 
@@ -58,7 +59,7 @@ class Notifier:
         r = requests.post(f"{API}/channels/{channel_id}/messages",
                           headers=self._headers(), data=json.dumps({"embeds": [embed]}), timeout=30)
         if r.status_code not in (200, 201):
-            raise RuntimeError(f"디스코드 전송 실패 {r.status_code}: {r.text[:200]}")
+            raise RuntimeError(f"디스코드 전송 실패 {r.status_code} (ch={channel_id}): {r.text[:200]}")
         return r.json()
 
     def _patch(self, channel_id, message_id, embed):
@@ -97,17 +98,18 @@ class Notifier:
         }
 
     def _resolve_channel(self, dept):
-        if self.debug_mode:
-            # 개발용: 모든 학과 공지를 통합공지채널로 몰빵, @everyone 없음(개발채널 핑 방지)
-            return config.DEBUG_NOTICE_CHANNEL_ID, ""
-        return dept.get("discord_channel_id"), "@everyone"
+        if self.mono:
+            # --mono: 모든 공지를 통합채널 하나로 몰빵(무멘션). 빠른 개발 확인용.
+            return config.MONO_CHANNEL_ID, ""
+        # 학과별 채널. @everyone 은 실서비스일 때만(디버그 서버는 무멘션).
+        return dept.get("discord_channel_id"), ("" if self.debug_mode else "@everyone")
 
     # ── 공개 API ──────────────────────────────────────
     def send_new(self, notice, dept):
         channel_id, mention = self._resolve_channel(dept)
         if not channel_id:
-            # 채널 미배정(자동생성 전) → 개발/감시채널로 폴백 + 무멘션
-            channel_id = config.DEBUG_NOTICE_CHANNEL_ID if self.debug_mode else config.DISCORD_DEBUG_CHANNEL_ID
+            # 학과채널 미배정(setup_guild 전) → 통합채널로 폴백 + 무멘션
+            channel_id = config.MONO_CHANNEL_ID
             mention = ""
         res = self._post(channel_id, self._embed(notice, dept, mention))
         return channel_id, res["id"]

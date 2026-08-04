@@ -23,27 +23,27 @@ cp secrets/discord-api-info.json.example secrets/discord-api-info.json  # 봇 �
 python init/seed_db.py     # 1) DB 스키마(v2) + 64개 학과 시드 (idempotent)
 # 기존 v1 DB가 있으면(운영 데이터 보존) 먼저 이관:
 python db/migrate_v2.py    #    kind 컬럼 + FK ON UPDATE CASCADE + portal→scatch_* 개명 (멱등)
-python main.py once        # 2) 부팅 재적재 + 1회 크롤 + 요약 드레인 (수동/테스트)
-python main.py run         # 3) 상시: 워커 + 10분 스케줄 루프 (기본 라우팅=가짜채널)
-python main.py run --prod  #    운영: 실제 학과채널로 전송
-python main.py redo 10     # 4) 임의 10개 학과 '최신 공지 1건' 강제 재요약 → 콘솔 출력 (선택 학과만)
+python main.py init        # 2) 부트스트랩: 부팅 재적재 + 1회 크롤 + 요약 드레인 (첫 실행=시딩, 이후=밀린 신규)
+python main.py run --mono  # 3) 상시 + 통합채널 몰빵(개발 확인). 기본은 학과별 채널
+python main.py run --prod  #    운영: 실제 학과채널 + @everyone
+python main.py redo 10     # 4) 임의 10개 학과 '최신 공지 1건' 강제 재요약 (크롤 X, 튜닝용)
 ```
 
-### 모드(무엇을) 와 라우팅(어디로) — 두 축 분리
+### 모드(무엇을) 와 라우팅(어디로) — 직교 축
 
 **모드:**
-- `once` : 부팅 재적재 → 크롤 1회 → 요약 드레인 → 종료.
+- `init` : 부팅 재적재 → 크롤 1회 → 요약 드레인 → 종료. 첫 실행은 `seen` 시딩(무발송), 이후는 밀린 신규 처리. (정적 스키마·학과 시드는 `init/seed_db.py` 로 별개)
 - `run`  : 워커 상시 + `CRAWL_INTERVAL_SEC`(기본 600s)마다 크롤 반복.
-- `redo N` (별칭 `debug N`) : 임의 N개 학과에서 목록 맨 위(최신) 공지를 `seen`에서 지워 **신규처럼
-  재요약**하고 결과를 출력. **선택된 N개 학과만** 처리(전체 크롤 안 함). 프롬프트/품질 튜닝용. 기본 10.
+- `redo N` (별칭 `debug N`) : 임의 N개 학과 최신 공지 1건을 `seen`에서 지워 **신규처럼 재요약**·발송. 크롤 X. 기본 10 (`redo 0` = 0건).
 
-**라우팅 플래그(모드와 무관, 우선순위 `--dryrun` > 가짜채널 > 실채널):**
-- 기본(플래그 없음) : **가짜 개발채널**(디버깅 서버 통합공지). 개발 안전 기본값.
-- `--prod` : 실제 학과채널 + `@everyone`, 실서비스 서버.
-- `--dryrun` : 디스코드 전송 안 함, 로그만.
+**라우팅 플래그(모드와 무관, 직교):**
+- ① 길드: 기본 **디버그 서버**, `--prod` 만 실서비스.
+- ② 채널: 기본 **학과별 채널**, `--mono` 면 **통합채널 하나로 몰빵**(`config.MONO_CHANNEL_ID`).
+- ③ 전송: `--dryrun` 이면 전송 안 함(로그만).
+- `@everyone` 은 **실서비스(비-mono·`--prod`)** 일 때만. 디버그/모노는 무멘션.
 
-`config.DEBUG_EN`(단일 식별자)이 라우팅을 결정하며 기본 True(가짜). `--prod`가 유일하게 이를 끔.
-config.json엔 두지 않는다(실행 플래그로 제어).
+`config.DEBUG_EN`(길드 축)은 `--prod`만 끈다. config.json엔 두지 않는다(실행 플래그로 제어).
+빠른 개발 확인은 `run --mono`(통합채널) 권장 — 학과별 비공개 채널은 봇에 접근권한 필요.
 
 `.db` 확인: VSCode 무료 확장 **SQLite Viewer**(qwtel.sqlite-viewer)로 `db/notice.db` 더블클릭,
 또는 쿼리용 **SQLite**(alexcvzz.vscode-sqlite).

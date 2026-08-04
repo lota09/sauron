@@ -71,7 +71,14 @@ async def run(gid):
             created_r = created_c = reused_r = reused_c = 0
             for d in depts:
                 did, name = d["dept_id"], (d.get("name_ko") or d["dept_id"])
-                college = (d.get("college") or "").strip() or "기타"
+                # 카테고리는 college가 아니라 kind로 결정(college 컬럼은 '단과대'로 순수 유지).
+                kind = d.get("kind") or "major"
+                if kind == "general":
+                    college = "공통 공지"
+                elif kind == "etc":
+                    college = "기타"
+                else:
+                    college = (d.get("college") or "").strip() or "기타"
 
                 # ── 역할: 이름으로 실제 존재 확인 → 없으면 생성, 있으면 재사용 ──
                 role = roles_by_name.get(name)

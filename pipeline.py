@@ -93,3 +93,24 @@ async def run_once(c):
         c.log(f"[부팅 재적재] 미완 요약 {n}건")
     await crawl_pass(c)
     await drain(c)
+
+
+async def seed_all(c):
+    """init 전용: 전 학과 '목록만' 긁어 현재 URL 전량을 seen에 등록(무발송·무요약·무LLM).
+    최초 부트스트랩/베이스라인 리셋. 긴 런타임·스팸 없이 '지금 게시된 것은 모두 본 것으로' 처리."""
+    from crawl.diff import _scrape_pages
+    depts = await asyncio.to_thread(c.store.active_depts)
+    ok = urls_total = 0
+    for dept in depts:
+        try:
+            pages = int(dept.get("seed_pages") or config.SEED_PAGES)
+            items = await asyncio.to_thread(_scrape_pages, c.fetcher, dept, pages)
+            urls = [it["url"] for it in items]
+            await asyncio.to_thread(c.store.mark_seen, dept["dept_id"], urls)
+            await asyncio.to_thread(c.store.set_seeded, dept["dept_id"])
+            ok += 1
+            urls_total += len(urls)
+        except Exception as e:
+            c.log(f"[시드 실패] {_label(dept)}: {e}")
+    c.store.checkpoint()
+    c.log(f"[init 완료] {ok}/{len(depts)} 학과 · {urls_total} URL 기억(무발송)")

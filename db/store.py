@@ -155,6 +155,16 @@ class Store:
             self._con.execute("DELETE FROM notices WHERE url=?", (url,))
             self._con.commit()
 
+    def forget_like(self, url_substring: str) -> int:
+        """url에 부분문자열이 포함된 공지를 seen_notices+notices 양쪽에서 삭제 → 다음 크롤에 재감지·재요약.
+        instr 사용(LIKE의 % 와일드카드와 URL의 % 인코딩 충돌 회피). 반환: 지운 seen 행 수."""
+        with self._lock:
+            cur = self._con.execute("DELETE FROM seen_notices WHERE instr(url, ?) > 0", (url_substring,))
+            n = cur.rowcount
+            self._con.execute("DELETE FROM notices WHERE instr(url, ?) > 0", (url_substring,))
+            self._con.commit()
+        return n
+
     def pending_summary_ids(self) -> List[int]:
         """부팅 재적재: 아직 요약 안 끝난(발송됐거나 요약중) 공지."""
         with self._lock:
@@ -162,6 +172,14 @@ class Store:
                 "SELECT id FROM notices WHERE status IN ('detected','notified','summarizing') ORDER BY id"
             ).fetchall()
         return [r["id"] for r in rows]
+
+    def search_notices(self, query: str, limit: int = 30) -> List[Dict[str, Any]]:
+        """제목에 query 부분문자열이 든 공지 검색(최신순). redo 검색용."""
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT id, dept_id, title, url, status FROM notices WHERE instr(title, ?)>0 "
+                "ORDER BY id DESC LIMIT ?", (query, limit)).fetchall()
+        return [dict(r) for r in rows]
 
     def recent_notices(self, limit: int = 20) -> List[Dict[str, Any]]:
         with self._lock:

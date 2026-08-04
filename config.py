@@ -78,6 +78,16 @@ LLM_FREQUENCY_PENALTY = _get("LLM_FREQUENCY_PENALTY", "")  # ⚠ OlliteRT는 무
 LLM_RETRY_LIMIT = _get_int("LLM_RETRY_LIMIT", 1)
 LLM_RETRY_WAIT_SEC = _get_int("LLM_RETRY_WAIT_SEC", 5)   # 연결 실패 시 재시도 전 대기(초)
 
+# ── 멀티모달(비전) — 이미지 대체 공지 구제 ─────────────
+#  본문·OCR 모두 없고 이미지만 있는 공지(제목O·본문X·그림O)를 비전 LLM으로 요약 시도.
+#  ⚠ 2B 비전은 정확도 한계(브랜드/날짜 오독·환각 관측). '없는 것보단 낫다 + 면책문구' 관점의 best-effort.
+#  반복붕괴는 strip_degenerate가, 언어이탈은 검증기가 잡고, 실패 시 리롤(프롬프트 미세변형).
+# 공지에 이미지가 있으면 요약 요청에 '무조건' 첨부(텍스트 유무·글자수 무관). 프롬프트는 텍스트용과 공유
+# — LLM_USER_TEMPLATE 하나로 텍스트+이미지 함께 넘기면 모델이 알아서 이미지를 참고한다(비전 전용 프롬프트 X).
+LLM_VISION = _get_bool("LLM_VISION", True)                    # 이미지 첨부 on/off
+LLM_VISION_MAX_PX = _get_int("LLM_VISION_MAX_PX", 1024)       # 전송 전 최대 변(px). prefill/컨텍스트/PaS 크롭 절약
+LLM_VISION_MAX_IMAGES = _get_int("LLM_VISION_MAX_IMAGES", 4)  # 한 요청 최대 이미지 수(컨텍스트/지연 상한)
+
 # 언어 이탈 검사(결정론) — 2B judge가 못 잡는 외국어 혼입/붕괴를 코드로 차단.
 LLM_ENFORCE_KOREAN = _get_bool("LLM_ENFORCE_KOREAN", True)
 LLM_MAX_HAN = _get_int("LLM_MAX_HAN", 5)                    # 한자(CJK) 이보다 많으면 중국어 주입 의심
@@ -129,11 +139,14 @@ DEBUG_GUILD_ID = _get("DEBUG_GUILD_ID", "1195291355258310696")   # 디버깅 서
 PROD_GUILD_ID = _get("PROD_GUILD_ID", "")                         # 실서비스 서버(최종 검수 후 입력)
 DISCORD_CHANNEL_PREFIX = _get("DISCORD_CHANNEL_PREFIX", "")  # 학과 채널명 접두(선택)
 
-# DEBUG 모드: True면 실제 학과채널 대신 아래 '가짜 개발 채널'로 전송(개발 중 실서비스 방해 X).
-#   전송 라우팅 우선순위:  --dryrun(전송안함) > DEBUG_EN(가짜채널) > 실제 학과채널
-#   실행 시 '--debug'/'--prod'/'debug 명령'이 config.DEBUG_EN 을 확정(main.py). 이후 모두 이 단일 식별자를 봄.
-DEBUG_NOTICE_CHANNEL_ID = _get("DEBUG_NOTICE_CHANNEL_ID", "1530567154473373837")     # 통합공지(모든 학과 몰빵)
-DEBUG_SUBSCRIBE_CHANNEL_ID = _get("DEBUG_SUBSCRIBE_CHANNEL_ID", "1530566820598386779")  # 구독관리
+# 라우팅 두 축(직교):
+#   ① 길드: 기본 디버그 서버, '--prod' 만 실서비스(DEBUG_EN).
+#   ② 채널: 기본 학과별 채널, '--mono' 면 아래 통합채널 하나로 몰빵.
+#   ③ 전송: '--dryrun' 이면 전송 안 함(로그만).
+#   @everyone 은 실서비스(비-mono·prod)일 때만. 디버그/모노는 무멘션.
+MONO_CHANNEL_ID = _get("MONO_CHANNEL_ID", _get("DEBUG_NOTICE_CHANNEL_ID", "1530567154473373837"))  # --mono 몰빵 대상(통합공지)
+DEBUG_NOTICE_CHANNEL_ID = MONO_CHANNEL_ID   # 하위호환 별칭
+DEBUG_SUBSCRIBE_CHANNEL_ID = _get("DEBUG_SUBSCRIBE_CHANNEL_ID", "1530318804968538195")  # 구독관리
 DEBUG_DEBUG_CHANNEL_ID = _get("DEBUG_DEBUG_CHANNEL_ID", "1530566884121116783")       # 디버그(개발용)
 # 디버그 모드 단일 식별자. 라우팅은 config가 아니라 '실행 플래그'로만 결정(안전).
 # 기본 True(가짜 개발채널). 오직 '--prod' 만 False(실채널). config.json은 이 값을 못 건드림.

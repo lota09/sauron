@@ -311,12 +311,15 @@ if _DISCORD:
         client = discord.Client(intents=intents)
         tree = app_commands.CommandTree(client)
         guild_obj = discord.Object(id=int(gid)) if gid else None
-
-        # 재시작 후에도 공개 버튼이 동작하도록 영구 View 등록(custom_id 기반)
-        client.add_view(SubscribeEntryView(store))
+        _persist = {"added": False}   # 영구 View 중복등록 방지 플래그
 
         @client.event
         async def on_ready():
+            # 재시작 후에도 공개 버튼이 동작하도록, 로그인 이후 1회 영구 View 등록(custom_id 매칭).
+            #   run() 이전에 add_view 하면 게이트웨이 연결 초기화로 등록이 날아감 → 반드시 on_ready에서.
+            if not _persist["added"]:
+                client.add_view(SubscribeEntryView(store))
+                _persist["added"] = True
             await (tree.sync(guild=guild_obj) if guild_obj else tree.sync())
             log.info("로그인: %s | %s 서버(%s)", client.user,
                      "디버깅" if debug else "실서비스", gid or "전역")

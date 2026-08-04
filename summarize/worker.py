@@ -5,6 +5,7 @@ import json
 
 import config
 from summarize.llm import SummaryError, EmptyContentError
+from summarize.vision import to_data_url
 
 
 async def summarize_one(c, notice_id: int):
@@ -29,16 +30,25 @@ async def summarize_one(c, notice_id: int):
                 parts.append(t)
         ocr_text = "\n".join(parts)
 
-    # LLM 요약 (동시성 제한). 재시도 정책은 summarize() 내부에서 사유별로 처리.
+    # 이미지가 있으면 요약 요청에 무조건 첨부(텍스트 유무 무관). 최대 N장(컨텍스트/지연 상한).
+    data_urls = []
+    if images and config.LLM_VISION:
+        for img in images[:config.LLM_VISION_MAX_IMAGES]:
+            du = await asyncio.to_thread(to_data_url, img.get("url", ""), config.LLM_VISION_MAX_PX)
+            if du:
+                data_urls.append(du)
+
+    # LLM 요약 (동시성 제한). 재시도는 summarize() 내부. 본문·OCR·이미지 모두 없으면 no_content.
     summary = engine = None
     err = None
     no_content = False
     try:
         async with c.queue.sem:
             summary, engine = await asyncio.to_thread(
-                c.summarizer.summarize, notice["title"], notice.get("content_raw") or "", ocr_text or None)
+                c.summarizer.summarize, notice["title"], notice.get("content_raw") or "",
+                ocr_text or None, data_urls or None)
     except EmptyContentError as e:
-        no_content = True          # 요약할 내용 없음(#3): 실패 아님, 재시도 안 함
+        no_content = True
         err = e
     except SummaryError as e:
         err = e
@@ -71,7 +81,7 @@ async def summarize_one(c, notice_id: int):
         # 제목만 있고 본문·OCR 모두 없음 → LLM에 안 보냄. '요약할 내용이 없습니다' 표기(재시도 X).
         # 실패가 아니므로 디버그 발송 안 함. 사유는 DB(fail_reason)에만 기록(사후 분석용).
         await asyncio.to_thread(c.store.set_summary, notice_id, None, None, ocr_text or None,
-                                "no_content", "본문·OCR 없음(이미지 대체 공지)")
+                                "no_content", "본문·OCR·이미지 없음 또는 이미지 로드 실패")
         await _edit(await asyncio.to_thread(c.store.get_notice, notice_id))
         c.log(f"[내용 없음] {notice['title'][:40]}")
     else:
