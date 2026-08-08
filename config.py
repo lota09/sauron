@@ -129,6 +129,7 @@ OCR_TIMEOUT = _get_int("OCR_TIMEOUT", 60)
 # ── 크롤 ─────────────────────────────────────────────
 UPDATE_LIMIT = _get_int("UPDATE_LIMIT", 5)      # 신규가 이보다 많으면 사이트깨짐 의심→대량알림 차단
 SEED_PAGES = _get_int("SEED_PAGES", 3)          # depts.seed_pages 없을 때 기본
+JSON_API_SCAN_PAGES = _get_int("JSON_API_SCAN_PAGES", 12)  # json_api 본문 캐시 미스 시 훑을 최대 페이지수(깊은페이지 재처리)
 REQUEST_TIMEOUT = _get_int("REQUEST_TIMEOUT", 30)
 CRAWL_INTERVAL_SEC = _get_int("CRAWL_INTERVAL_SEC", 600)  # 10분
 USER_AGENT = _get("USER_AGENT",

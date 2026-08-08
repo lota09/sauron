@@ -24,12 +24,12 @@ SCHEMA = os.path.join(ROOT, "db", "schema.sql")
 # 시드에서 갱신할 설정 컬럼(채널/역할/active/seeded_at 제외)
 CONFIG_COLS = ["name_ko", "kind", "college", "department", "major", "list_url",
                "link_selector", "content_selector", "url_prefix",
-               "fetch_type", "login", "seed_pages", "icon_url", "note"]
+               "fetch_type", "fetch_config", "login", "seed_pages", "icon_url", "note"]
 ALL_COLS = ["dept_id"] + CONFIG_COLS + ["discord_channel_id", "discord_role_id", "active", "seeded_at"]
 
 # NULL 허용 컬럼(빈 문자열 → NULL). 나머지 NOT NULL 컬럼은 원값 유지.
 NULLABLE = {"college", "department", "major", "link_selector",
-            "content_selector", "icon_url", "note"}
+            "content_selector", "fetch_config", "icon_url", "note"}
 INT_COLS = {"login", "seed_pages"}
 
 
@@ -52,6 +52,12 @@ def seed(db_path: str, seed_path: str) -> None:
 
     with open(SCHEMA, encoding="utf-8") as f:
         con.executescript(f.read())
+
+    # 기존 DB 이관: CREATE IF NOT EXISTS는 컬럼 추가를 못하므로 누락 컬럼은 ALTER로 보강(멱등).
+    have = {r[1] for r in con.execute("PRAGMA table_info(depts)").fetchall()}
+    if "fetch_config" not in have:
+        con.execute("ALTER TABLE depts ADD COLUMN fetch_config TEXT")
+        print("[seed_db] depts.fetch_config 컬럼 추가(v5 이관)")
 
     with open(seed_path, encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))

@@ -181,6 +181,68 @@ def test_image_multi_extract():
     check("_3 리사이즈 변형은 1장으로 병합", sum("notice_3" in u for u in urls) == 1, str(urls))
 
 
+def test_apiparse():
+    print("[test] apiparse(dig/lexical/html unescape)")
+    from crawl import apiparse
+    check("dig 중첩", apiparse.dig({"a": {"b": {"c": 7}}}, "a.b.c") == 7, "")
+    check("dig 실패 None", apiparse.dig({"a": 1}, "a.b.c") is None, "")
+    # html: 엔티티 해제
+    h = apiparse.to_html("html", "&lt;p&gt;본문&lt;img src=&quot;http://x/a.png&quot;&gt;&lt;/p&gt;")
+    check("html unescape", "<p>본문" in h and 'src="http://x/a.png"' in h, h)
+    # lexical: 텍스트 추출
+    lex = json.dumps({"editorState": {"root": {"children": [
+        {"type": "paragraph", "children": [{"type": "text", "text": "리xical본문"}]},
+        {"type": "image", "src": "http://x/p.png"}]}}})
+    lh = apiparse.to_html("lexical", lex)
+    check("lexical 텍스트", "리xical본문" in lh, lh)
+    check("lexical 이미지", 'src="http://x/p.png"' in lh, lh)
+
+
+def test_json_api():
+    print("[test] json_api 크롤(html·lexical, 모의응답)")
+    from crawl.fetcher import Fetcher
+
+    class FakeResp:
+        def __init__(self, o): self._o = o
+        def raise_for_status(self): pass
+        def json(self): return self._o
+
+    # startup류(html 본문)
+    dept = {"dept_id": "t_api", "list_url": "https://x/board", "fetch_type": "json_api",
+            "fetch_config": json.dumps({
+                "list_url": "https://x/api/list?pageNum={page}", "list_path": "data.content.list",
+                "id_key": "boardContentId", "title_key": "boardTitle", "content_key": "boardContent",
+                "content_format": "html", "url_template": "https://x/board/notice/{id}", "page_base": 1})}
+    payload = {"data": {"content": {"list": [
+        {"boardContentId": 10, "boardTitle": "공지A",
+         "boardContent": "&lt;p&gt;본문A&lt;/p&gt;&lt;img src=&quot;https://x/a.png&quot;&gt;"},
+        {"boardContentId": 11, "boardTitle": "공지B", "boardContent": "&lt;p&gt;본문B&lt;/p&gt;"}]}}}
+    f = Fetcher()
+    f.session.get = lambda url, **kw: FakeResp(payload)
+    items = f.scrape_list(dept)
+    check("json_api 목록 2건", len(items) == 2, str(items))
+    check("json_api 제목·URL", items[0] == {"title": "공지A", "url": "https://x/board/notice/10"}, str(items[0]))
+    d = f.fetch_content(dept, "https://x/board/notice/10")
+    check("json_api html 본문", "본문A" in d["content"], d["content"][:60])
+    check("json_api html 이미지", len(d["images"]) == 1 and d["images"][0]["url"].endswith("a.png"), str(d["images"]))
+
+    # media류(lexical 본문, page_base 0)
+    dept2 = {"dept_id": "t_api2", "list_url": "https://m/b", "fetch_type": "json_api",
+             "fetch_config": json.dumps({
+                 "list_url": "https://m/v1/board/?page={page}&menuId=136", "list_path": "data.boards",
+                 "id_key": "id", "title_key": "title", "content_key": "content",
+                 "content_format": "lexical", "url_template": "https://m/board/notices/{id}", "page_base": 0})}
+    lex = json.dumps({"editorState": {"root": {"children": [
+        {"type": "paragraph", "children": [{"type": "text", "text": "미디어본문X"}]}]}}})
+    payload2 = {"data": {"boards": [{"id": 5, "title": "미디어공지", "content": lex}]}}
+    f2 = Fetcher()
+    f2.session.get = lambda url, **kw: FakeResp(payload2)
+    it2 = f2.scrape_list(dept2)
+    check("json_api lexical 목록", it2 == [{"title": "미디어공지", "url": "https://m/board/notices/5"}], str(it2))
+    d2 = f2.fetch_content(dept2, "https://m/board/notices/5")
+    check("json_api lexical 본문", "미디어본문X" in d2["content"], d2["content"][:60])
+
+
 def test_diff_seed_new_limit():
     print("[test] 차집합 · 시딩 · UPDATE_LIMIT")
     store, path = temp_store([DEPT])
@@ -428,7 +490,8 @@ def test_subscribe_logic():
 
 
 if __name__ == "__main__":
-    for t in (test_fetcher_parse, test_image_multi_extract, test_diff_seed_new_limit, test_llm_client,
+    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api,
+              test_diff_seed_new_limit, test_llm_client,
               test_run_once_e2e, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
               test_subscribe_logic, test_dst_routing):

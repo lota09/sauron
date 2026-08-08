@@ -25,7 +25,11 @@ CREATE TABLE IF NOT EXISTS depts (
   fetch_type         TEXT NOT NULL DEFAULT 'html',
                      -- 'html'(제네릭 CSS) | 'json_ssfilm' | 'json_mediamba'
                      -- | 'onclick_media' | 'post_lawyer' | 'dom_materials'
+                     -- | 'json_api'(JS프론트 사이트의 JSON API — 상세는 fetch_config)
                      -- | 'login_*'(향후 ssupath 등, 현재 미사용)
+  fetch_config       TEXT,                  -- json_api 등 확장 파서용 JSON 설정(html 사이트는 NULL)
+                     -- json_api 키: list_url({page})·list_path·id_key·title_key·url_template
+                     --   ·content_key·content_format(html|lexical|plain)·page_base·headers
   login              INTEGER NOT NULL DEFAULT 0,  -- 인증 필요 여부(향후). 0=공개
   seed_pages         INTEGER NOT NULL DEFAULT 3,  -- 최초 시딩 시 훑을 페이지 수
   discord_channel_id TEXT,                  -- 학과 전용 채널(없으면 NULL→자동생성 단계에서 채움)
@@ -95,4 +99,4 @@ CREATE TABLE IF NOT EXISTS app_meta (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
-INSERT OR IGNORE INTO app_meta(key, value) VALUES ('schema_version', '4');  -- v4: notices 단일 테이블(seen 통합)
+INSERT OR IGNORE INTO app_meta(key, value) VALUES ('schema_version', '5');  -- v5: depts.fetch_config(json_api 확장)

@@ -16,6 +16,7 @@ fetch_type:
 infocom: 학교서버 버그(Uncaught PDOException) 에러페이지 감지 시 F5처럼 재시도.
 """
 import hashlib
+import json
 import os
 import re
 import time
@@ -26,6 +27,7 @@ import urllib3
 from bs4 import BeautifulSoup, Comment
 
 import config
+from crawl import apiparse
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -47,6 +49,7 @@ class Fetcher:
             "Connection": "keep-alive",
         })
         self.timeout = config.REQUEST_TIMEOUT
+        self._json_cache = {}   # json_api: dept_id → {notice_url: item} (scrape_list이 채움)
 
     # ── HTTP with infocom retry ────────────────────────
     def _get(self, url, retry_on_error_page=False):
@@ -83,6 +86,8 @@ class Fetcher:
                 return self._list_lawyer(url)
             if ftype == "dom_materials":
                 return self._list_materials(url)
+            if ftype == "json_api":
+                return self._list_json_api(dept)
             return self._list_generic(url, dept.get("link_selector"), prefix,
                                       retry=self._needs_retry(dept))
         except Exception as e:
@@ -104,6 +109,61 @@ class Fetcher:
                     full = prefix + href
                 out.append({"title": text, "url": full})
         return out
+
+    # ── json_api: 설정(fetch_config)로 구동되는 제네릭 JSON API 크롤 ──
+    #   새 API 사이트 = depts 행 + fetch_config JSON만 추가(코드 X). 본문 인코딩만 apiparse에서 처리.
+    def _fetch_cfg(self, dept):
+        raw = dept.get("fetch_config")
+        if not raw:
+            raise FetchError(f"{dept.get('dept_id')}: fetch_config 없음(json_api 필수)")
+        return raw if isinstance(raw, dict) else json.loads(raw)
+
+    def _get_json(self, url, headers=None):
+        r = self.session.get(url, headers=(headers or {}), timeout=self.timeout, verify=False)
+        r.raise_for_status()
+        return r.json()
+
+    def _list_json_api(self, dept, page=None):
+        """fetch_config: list_url({page})·list_path·id_key·title_key·url_template·content_key·content_format
+        ·(선택)page_base(기본1)·headers. 본문이 목록 응답에 인라인이라 상세 재요청 불필요 → item을 캐시.
+        page=None이면 page_base(정상 크롤). 특정 페이지 조회 시 page 지정(캐시 미스 재처리용)."""
+        cfg = self._fetch_cfg(dept)
+        p = cfg.get("page_base", 1) if page is None else page
+        url = cfg["list_url"].format(page=p)
+        data = self._get_json(url, cfg.get("headers"))
+        arr = apiparse.dig(data, cfg["list_path"]) or []
+        idk, tk, tmpl = cfg["id_key"], cfg["title_key"], cfg["url_template"]
+        cache = self._json_cache.setdefault(dept["dept_id"], {})
+        cache.clear()
+        out = []
+        for it in arr:
+            if not isinstance(it, dict):
+                continue
+            cid = it.get(idk)
+            title = (it.get(tk) or "").strip()
+            if cid is None or not title:
+                continue
+            nurl = tmpl.format(id=cid)
+            cache[nurl] = it
+            out.append({"title": title, "url": nurl})
+        return out
+
+    def _content_json_api(self, dept, url):
+        cfg = self._fetch_cfg(dept)
+        it = self._json_cache.get(dept["dept_id"], {}).get(url)
+        if it is None:                       # 캐시 미스(예: query 재처리·깊은 페이지) → 페이지를 훑어 재조회
+            base = cfg.get("page_base", 1)
+            for p in range(base, base + config.JSON_API_SCAN_PAGES):
+                self._list_json_api(dept, p)
+                it = self._json_cache.get(dept["dept_id"], {}).get(url)
+                if it is not None:
+                    break
+        if it is None:
+            return {"content": "", "images": []}
+        raw = it.get(cfg["content_key"]) or ""
+        html_content = apiparse.to_html(cfg.get("content_format", "html"), raw)
+        images = self._extract_images(html_content, url) if html_content else []
+        return {"content": self._clean_html(html_content), "images": images}
 
     def _list_ssfilm(self, url):
         data = self._get(url).json()
@@ -172,6 +232,11 @@ class Fetcher:
     # ── 상세 본문 ──────────────────────────────────────
     def fetch_content(self, dept, url):
         ftype = dept.get("fetch_type", "html")
+        if ftype == "json_api":
+            try:
+                return self._content_json_api(dept, url)
+            except Exception as e:
+                raise FetchError(f"fetch_content json_api 실패({url}): {e}")
         try:
             if ftype == "json_ssfilm":
                 content = self._content_ssfilm(url)
