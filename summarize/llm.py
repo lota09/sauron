@@ -360,7 +360,10 @@ class OpenAICompatSummarizer:
         if not has_text and not image_urls:
             raise EmptyContentError("본문·OCR·이미지 모두 없음")
         body = content_body + (f"\n\n[이미지 OCR (오탈자 가능)]\n{ocr_text}" if ocr_text else "")
-        text, model = self._generate(self._compose_prompt(title, body), image_urls=image_urls or None)
+        base = self._compose_prompt(title, body)
+        if image_urls:
+            base += config.LLM_VISION_HINT      # 이미지 있을 때만 '포스터를 읽어라' 지시 추가
+        text, model = self._generate(base, image_urls=image_urls or None)
         engine = f"vision:{model}×{len(image_urls)}" if image_urls else model
         return text, engine
 

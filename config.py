@@ -47,7 +47,6 @@ def _get_bool(key, default):
 
 # ── 경로 ─────────────────────────────────────────────
 DB_PATH = _get("SAURON_DB", os.path.join(_HERE, "db", "notice.db"))
-SEED_CSV = _get("SAURON_SEED", os.path.join(_HERE, "init", "depts_seed.csv"))
 
 # ── 요약 LLM (OpenAI 호환) ───────────────────────────
 # 개발: http://192.168.50.153:8000/v1 · 배포(Note20): http://localhost:8000/v1
@@ -85,8 +84,14 @@ LLM_RETRY_WAIT_SEC = _get_int("LLM_RETRY_WAIT_SEC", 5)   # 연결 실패 시 재
 # 공지에 이미지가 있으면 요약 요청에 '무조건' 첨부(텍스트 유무·글자수 무관). 프롬프트는 텍스트용과 공유
 # — LLM_USER_TEMPLATE 하나로 텍스트+이미지 함께 넘기면 모델이 알아서 이미지를 참고한다(비전 전용 프롬프트 X).
 LLM_VISION = _get_bool("LLM_VISION", True)                    # 이미지 첨부 on/off
-LLM_VISION_MAX_PX = _get_int("LLM_VISION_MAX_PX", 1024)       # 전송 전 최대 변(px). prefill/컨텍스트/PaS 크롭 절약
+# ⚠ 다운스케일 트레이드오프(probe 실측): 768~1024는 포스터 날짜를 정독하면서 다중이미지 페이로드를 크게 줄인다
+#   (2479px 원본 3장 ~3MB → ~0.5MB). 512는 글자가 뭉개져 '환각 날짜'가 나옴 → 768 미만 금지.
+#   조밀한 표까지 정밀 추출이 필요하면 다운스케일이 아니라 타일링/OCR로. Pillow 없으면 이 값 무시(원본 전송).
+LLM_VISION_MAX_PX = _get_int("LLM_VISION_MAX_PX", 1024)       # 전송 전 최대 변(px)
 LLM_VISION_MAX_IMAGES = _get_int("LLM_VISION_MAX_IMAGES", 4)  # 한 요청 최대 이미지 수(컨텍스트/지연 상한)
+# 이미지가 첨부될 때만 프롬프트에 덧붙는 지시(텍스트 전용 요약엔 안 붙어 '이미지' 오해 방지).
+LLM_VISION_HINT = _get("LLM_VISION_HINT",
+                       "\n- 첨부된 포스터 이미지 안의 날짜·주요일정·대상·표 내용을 읽어 요약에 반영할 것.")
 
 # 언어 이탈 검사(결정론) — 2B judge가 못 잡는 외국어 혼입/붕괴를 코드로 차단.
 LLM_ENFORCE_KOREAN = _get_bool("LLM_ENFORCE_KOREAN", True)
@@ -104,7 +109,7 @@ LLM_USER_TEMPLATE = """다음 학사공지를 개조식 불릿으로 요약해�
 - 각 항목은 '- '로 시작하는 한 줄. 하위 불릿(들여쓰기)은 쓰지 말고 최상위 불릿만.
 - 문장은 '4학년 대상', '신청 가능'처럼 종결어미 생략 또는 '~함/~임/~바람'.
 - 분량은 공지 정보량에 따라 2줄에서 6줄 사이를 유지. 핵심만 추리고 세부 조건·목록을 전부 나열하지 말 것.
-- 마감일·대상·신청방법을 우선 포함. 장소·주의사항은 정말 중요할 때만.
+- 주요일정·대상·신청방법을 우선 포함. 장소·주의사항은 정말 중요할 때만.
 - 인사말·설명·머리말 없이 불릿만 출력.
 
 [제목]
@@ -145,7 +150,6 @@ DISCORD_CHANNEL_PREFIX = _get("DISCORD_CHANNEL_PREFIX", "")  # 학과 채널명 
 # --dst mono 대상(통합공지 채널). '값을 지정한 단일 채널 몰빵' = --dst <채널ID>와 같은 메커니즘의 이름표.
 #   비우면 --dst mono 불가(그땐 --dst <채널ID>로 직접). --dst poly(각 학과채널)는 이 값과 무관.
 MONO_CHANNEL_ID = _get("MONO_CHANNEL_ID", "")
-DEBUG_NOTICE_CHANNEL_ID = MONO_CHANNEL_ID   # 하위호환 별칭
 
 # 감시(디버그) 채널 — 크롤/요약 오류 임베드가 가는 곳.
 #   기본: setup_guild가 이름(DEBUG_CHANNEL_NAME)으로 '자동 생성/재사용'하고 그 ID를 DB(app_meta)에 저장.
@@ -153,7 +157,6 @@ DEBUG_NOTICE_CHANNEL_ID = MONO_CHANNEL_ID   # 하위호환 별칭
 #   수동 지정하려면 DEBUG_CHANNEL_ID에 채널ID를 넣으면 그 값이 우선한다.
 DEBUG_CHANNEL_ID = _get("DEBUG_CHANNEL_ID", "")
 DEBUG_CHANNEL_NAME = _get("DEBUG_CHANNEL_NAME", "사우론-감시")
-DEBUG_SUBSCRIBE_CHANNEL_ID = _get("DEBUG_SUBSCRIBE_CHANNEL_ID", "")  # 구독관리(선택)
 
 # 디버그 모드 단일 식별자. 라우팅은 config가 아니라 '실행 플래그'로만 결정(안전).
 DEBUG_EN = True

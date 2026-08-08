@@ -5,7 +5,7 @@ import json
 
 import config
 from summarize.llm import SummaryError, EmptyContentError
-from summarize.vision import to_data_url
+from summarize.vision import to_data_url, HAVE_PIL
 
 
 async def summarize_one(c, notice_id: int):
@@ -44,6 +44,12 @@ async def summarize_one(c, notice_id: int):
         if len(images) > config.LLM_VISION_MAX_IMAGES:
             c.log(f"[이미지 상한] {len(images)}장 중 {config.LLM_VISION_MAX_IMAGES}장만 입력"
                   f"(LLM_VISION_MAX_IMAGES)")
+        if data_urls and not HAVE_PIL:
+            c.log("[비전] Pillow 미설치 → 다운스케일 없이 원본 전송(2479px 다중이미지는 요약이 뭉개질 위험). "
+                  "`pip install pillow` 권장")
+        elif data_urls and config.LLM_VISION_MAX_PX < 768:
+            c.log(f"[비전] LLM_VISION_MAX_PX={config.LLM_VISION_MAX_PX} < 768 → 글자 뭉개짐·환각 위험(실측). "
+                  "768~1024 권장")
 
     # LLM 요약 (동시성 제한). 재시도는 summarize() 내부. 본문·OCR·이미지 모두 없으면 no_content.
     summary = engine = None
@@ -85,7 +91,9 @@ async def summarize_one(c, notice_id: int):
         await _edit(await asyncio.to_thread(c.store.get_notice, notice_id))
         # 이미지 입력 현황을 로그로 노출: 실제 LLM에 넣은 장수 / 추출 장수.
         #   (LLM이 그 이미지를 '이해'했는지는 여기서 알 수 없다 — 입력 여부만 확인 가능.)
-        img_note = f" (이미지 {len(data_urls)}/{len(images)}장 입력)" if images else ""
+        # 전송 페이로드 KB도 노출(서버가 큰 이미지를 조용히 버릴 때 진단용).
+        kb = sum(len(u) for u in data_urls) * 3 // 4 // 1024 if data_urls else 0
+        img_note = f" (이미지 {len(data_urls)}/{len(images)}장·{kb}KB 입력)" if images else ""
         c.log(f"[요약 완료] {engine} :: {notice['title'][:40]}{img_note}")
     elif no_content:
         # 제목만 있고 본문·OCR 모두 없음 → LLM에 안 보냄. '요약할 내용이 없습니다' 표기(재시도 X).

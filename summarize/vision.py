@@ -12,6 +12,12 @@ import requests
 
 import config
 
+try:
+    from PIL import Image           # noqa: F401 (존재 여부 감지용)
+    HAVE_PIL = True
+except Exception:
+    HAVE_PIL = False                # 없으면 원본 그대로 전송(다운스케일·재인코딩 생략)
+
 
 def to_data_url(url, max_px=None, timeout=None):
     if not url:
@@ -28,7 +34,6 @@ def to_data_url(url, max_px=None, timeout=None):
     # 다운스케일(선택): Pillow 있으면 축소 + JPEG 재인코딩
     try:
         import io
-        from PIL import Image
         im = Image.open(io.BytesIO(raw)).convert("RGB")
         if max(im.size) > max_px:
             im.thumbnail((max_px, max_px))

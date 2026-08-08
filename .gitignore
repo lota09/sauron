@@ -1,3 +1,7 @@
+# git
+.gitattributes
+.gitignore
+
 # 런타임 산출물(스크립트로 재생성 가능)
 db/notice.db
 db/notice.db-wal
@@ -12,3 +16,10 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# 실험 산출물(probe가 생성하는 이미지 덤프 — 재생성 가능)
+experiments/vision_probe/out/
+experiments/vision_probe/out_multi/
+
+# 임시 정리 폴더(전송/추출 잔여물 — 수동 삭제용)
+_to_delete/

@@ -3,6 +3,12 @@ requests>=2.31
 beautifulsoup4>=4.12
 lxml>=5.0
 
+# ── 비전(이미지 요약) 권장 ──
+# 실측: 포스터가 2479x3504(~1MB)까지 커서 여러 장을 원본 그대로 보내면 모델이 뭉뚱그린다(날짜 놓침).
+#   Pillow가 있으면 LLM_VISION_MAX_PX(기본 1024)로 축소+JPEG → 3장 페이로드 ~3MB→~0.5MB, 날짜 정독은 유지
+#   (probe에서 1024까지 8.10 정독 확인). ⚠ 단 512처럼 과하게 줄이면 글자가 뭉개져 환각 → 768 미만 금지.
+Pillow>=10.0
+
 # ── OCR (선택; 타겟 기기에서만 설치 · RAM 주의) ──
 # Tesseract 백엔드(가벼움): 시스템 tesseract-ocr, tesseract-ocr-kor + 아래
 #   pytesseract>=0.3.10

@@ -134,27 +134,11 @@ class Store:
                 (summary, engine, ocr_text, status, fail_reason, notice_id))
             self._con.commit()
 
-    def update_content(self, notice_id: int, content_raw: str, images_json: str):
-        with self._lock:
-            self._con.execute(
-                "UPDATE notices SET content_raw=?, images_json=?, updated_at=datetime('now') WHERE id=?",
-                (content_raw, images_json, notice_id))
-            self._con.commit()
-
     def forget_url(self, dept_id: str, url: str):
         """디버그용: notices에서 행 제거 → 다음 크롤에 '신규'로 재감지·재처리."""
         with self._lock:
             self._con.execute("DELETE FROM notices WHERE dept_id=? AND url=?", (dept_id, url))
             self._con.commit()
-
-    def forget_like(self, url_substring: str) -> int:
-        """url에 부분문자열이 포함된 공지를 notices에서 삭제 → 다음 크롤에 재감지·재처리.
-        instr 사용(LIKE의 % 와일드카드와 URL의 % 인코딩 충돌 회피). 반환: 지운 행 수."""
-        with self._lock:
-            cur = self._con.execute("DELETE FROM notices WHERE instr(url, ?) > 0", (url_substring,))
-            n = cur.rowcount
-            self._con.commit()
-        return n
 
     def delete_notice(self, notice_id: int) -> None:
         """query 모드 'DB에서 제거' 용: 특정 공지 행 삭제 → 재감지 대상이 됨."""

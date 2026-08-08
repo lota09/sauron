@@ -1,6 +1,7 @@
 # sauron_reborn 진행 현황
 
-_기준: 오프라인 테스트 59/59 통과. "온디바이스 초저비용·무외부의존·누락0" 철학._
+_기준: 오프라인 테스트 66/66 통과. "온디바이스 초저비용·무외부의존·누락0" 철학._
+_확장(나중에 할 것: API·RSS·AI에이전트봇) 평가는 [`ROADMAP.md`](ROADMAP.md)._
 
 ---
 
@@ -21,23 +22,32 @@ _기준: 오프라인 테스트 59/59 통과. "온디바이스 초저비용·무
 
 **디스코드**
 - 구독봇 3단계(공통→전공→기타) + 공개 상주버튼(재시작 후에도 동작) + 관리자 `/구독버튼생성` + 임베드 + 로깅.
-- `setup_guild`(이름 기준 실존확인) — 실행완료, 역할/채널 63개 생성·재사용.
-- 발송 라우팅: `--dst` 단일 축 — `null`(무발송)·`mono`(통합채널)·`poly`(학과채널+@everyone)·`<채널ID>`. 감시채널 디버그는 토큰만 있으면 항상.
+- `setup_guild`(이름 기준 실존확인) — 역할/채널 63개 생성·재사용 + **감시(디버그)채널 자동 생성**(app_meta에 ID 저장).
+- 발송 라우팅: `--dst` 단일 축 — `null`(무발송)·`mono`(통합채널, `MONO_CHANNEL_ID` 명시 필수)·`poly`(학과채널+@everyone)·`<채널ID>`.
+- poly인데 학과채널 미배정 시 통합채널 폴백 + **경고 로그**(조용한 오배송 방지). 감시채널은 config `DEBUG_CHANNEL_ID` 또는 setup_guild 자동생성분(app_meta).
+- 첫 세팅 필수값 = **봇 토큰 + `DISCORD_GUILD_ID` 둘뿐**(나머지 채널ID는 setup_guild가 채움).
 
 **CLI/라우팅**
 - 모드: `run`(상시) · `once`(1회, cron 근사) · `redo N`(임의 재요약) · `query "검색어"`(검색→선택→재처리·삭제).
 - `--dst {null|mono|poly|<채널ID>}`(택1, 기본 null) + `--nosummary`(직교: 요약·상세fetch 생략, dst null과 함께면 순수 시딩).
 
-**DB 헬퍼**: forget_url · forget_like(부분문자열) · search_notices.
-**문서**: DESIGN.md · vision_llm_experiment.md · embed_gallery.html · README.
+**DB 헬퍼**: forget_url · search_notices · delete_notice · get_meta/set_meta(app_meta).
+
+**이미지**
+- **다중 이미지 추출 버그 수정** — `_img_base`가 워드프레스 해상도 접미사(`-1568x2216`)뿐 아니라 `_숫자`(붙임 `_1/_2/_3`)까지 지워 3장짜리 공지가 1장으로 뭉개지던 것 수정. 회귀테스트 `test_image_multi_extract` 추가.
+- 이미지 입력 로그: `[요약 완료] … (이미지 N/M장 입력)`(전송/추출), 로드 실패 시 `[이미지 제외]`, 상한 초과 시 `[이미지 상한]`.
+
+**문서**: DESIGN.md · ROADMAP.md · vision_llm_experiment.md · embed_gallery.html · README · STATUS(본 문서).
 
 ---
 
 ## 🔵 지금 검증할 차례
 
-1. **이미지 추출 사이트별 검증** — scatch 확인됨(포스터 2장 추출 OK). **disu 재확인**(자기 셀렉터 `#printbody > div`로 재테스트, 결과 대기). 나머지 학과도 셀렉터가 본문 이미지를 잡는지 표본 점검.
-2. **비전 E2E** — 이미지 공지 하나를 `query "추가학기" --dst mono`로 검색·재처리 → `summary_engine=vision:…` 확인 + 요약 품질 확인.
-3. **전체 E2E(디바이스)** — `once --dst null --nosummary`(시딩) → `run`/`redo`/`query --dst mono` → 실LLM → 발송 → edit 까지 한 바퀴.
+1. **다중이미지 수정 실검증** — `query '군e러닝' --dst mono` → 재처리 → `vision:…×3` + 로그 `(이미지 3/3장 입력)` 확인(수정 전엔 ×1이었음).
+2. **결정론 진단** — 같은 입력에 다른 요약 관측. `LLM_TEMPERATURE=0`으로 놓고 재현되는지 확인(서버 기본 샘플링이 비-greedy인지 판별). 비전 경로 GPU 비결정성/조용한 리롤 가능성도 함께 염두.
+3. **감시채널 자동생성 검증** — `python -m notify.setup_guild` 재실행 → `사우론-감시` 채널 생성/재사용 + app_meta 저장 → 오류 시 디버그 임베드 도착 확인.
+4. **이미지 추출 사이트별 감사** — scatch 확인됨. disu(`#printbody > div`) 재확인, 나머지 학과 표본 점검.
+5. **전체 E2E(디바이스)** — 시딩 → `run --dst poly`(setup_guild 선행) → 실LLM → 발송 → edit 한 바퀴.
 
 ---
 
@@ -59,7 +69,9 @@ _기준: 오프라인 테스트 59/59 통과. "온디바이스 초저비용·무
 
 **E. 배포/상시구동** — Note20에서 ollitert(localhost) + `run` + 봇 상시. proot/chroot, keep-alive/헬스체크, 프로세스 죽음 자동복구.
 
-**F. 선택 개선** — 장식 이미지(작은 로고) 필터 · OCR 하이브리드 도입 여부 결정 · DESIGN.md 최신화.
+**F. 선택 개선** — 장식 이미지(작은 로고) 필터 · OCR 하이브리드 도입 여부 결정 · 원본(무접미사) 이미지가 리사이즈 변형보다 "작게" 취급되는 `_img_dims` 휴리스틱 정리(현재는 1024 다운스케일이라 실害 미미).
+
+**G. 확장(별도 트랙)** — API·RSS·AI에이전트봇 호스팅. 평가·우선순위는 [`ROADMAP.md`](ROADMAP.md)(요약: RSS 정적푸시 먼저).
 
 ---
 
