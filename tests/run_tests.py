@@ -438,8 +438,8 @@ def test_dst_routing():
     dept = {"discord_channel_id": "REAL"}
     chp, mp = Notifier(dst="poly")._resolve_channel(dept)
     check("poly→학과채널·@everyone", chp == "REAL" and mp == "@everyone", f"{chp}/{mp}")
-    chm, mm = Notifier(dst="mono")._resolve_channel(dept)
-    check("mono→통합채널·무멘션", chm == config.MONO_CHANNEL_ID and mm == "", f"{chm}/{mm}")
+    chm, mm = Notifier(dst="mono", mono_channel_id="MONO")._resolve_channel(dept)
+    check("mono→통합채널(주입)·무멘션", chm == "MONO" and mm == "", f"{chm}/{mm}")
     chid, mid = Notifier(dst="1530567154473373837")._resolve_channel(dept)
     check("채널ID→해당채널·무멘션", chid == "1530567154473373837" and mid == "", f"{chid}/{mid}")
     chn, _ = Notifier(dst="null")._resolve_channel(dept)

@@ -37,16 +37,17 @@ def _load_token():
 
 
 class Notifier:
-    def __init__(self, logger=None, dst="null", debug_channel_id=None):
+    def __init__(self, logger=None, dst="null", debug_channel_id=None, mono_channel_id=None):
         """dst: 'null'(전송안함) | 'mono'(통합채널) | 'poly'(각 학과채널) | '<채널ID>'(명시 채널).
-        debug_channel_id: 감시(디버그) 채널. 미지정 시 config.DEBUG_CHANNEL_ID(수동) 사용.
-        보통 build_components가 config 또는 DB(app_meta, setup_guild 자동생성분)에서 채워 넘긴다."""
+        mono_channel_id·debug_channel_id: 통합/감시 채널. build_components가 DB(app_meta,
+        setup_guild가 생성·저장)에서 읽어 주입한다(secrets에서 채널ID를 읽지 않음)."""
         self.token = _load_token()
         self.logger = logger
         self.dst = str(dst or "null")
         self.send_enabled = (self.dst != "null")   # 보낼 의사(dst != null)
         self.dry = not self.token                  # 실제 POST 불가(토큰 없음) → 시뮬레이션
-        self.debug_channel_id = debug_channel_id or config.DEBUG_CHANNEL_ID or None
+        self.debug_channel_id = debug_channel_id or None
+        self.mono_channel_id = mono_channel_id or None
         self._fake = 0
         self._poly_warned = set()                  # poly 폴백 경고 학과별 1회만
 
@@ -107,7 +108,7 @@ class Notifier:
         if self.dst == "poly":                                   # 각 학과 전용 채널(+@everyone)
             return dept.get("discord_channel_id"), "@everyone"
         if self.dst == "mono":                                   # 통합채널 몰빵(무멘션)
-            return config.MONO_CHANNEL_ID, ""
+            return self.mono_channel_id, ""
         if self.dst.isdigit():                                   # 명시한 단일 채널(무멘션)
             return self.dst, ""
         return None, ""                                          # null 등 → 전송 없음
@@ -124,9 +125,9 @@ class Notifier:
                     self._log(f"[경고] poly인데 '{dept.get('name_ko') or did}' 학과채널 미배정 "
                               f"→ 통합채널 폴백. `python -m notify.setup_guild` 로 채널 생성 필요")
             elif self.dst == "mono":
-                self._log("[경고] --dst mono 인데 MONO_CHANNEL_ID 미설정 → 발송 대상 없음. "
-                          "config에 MONO_CHANNEL_ID를 넣거나 --dst <채널ID>를 쓰세요")
-            channel_id = config.MONO_CHANNEL_ID or "null"
+                self._log("[경고] --dst mono 인데 통합채널 미설정 → 발송 대상 없음. "
+                          "`python -m notify.setup_guild` 실행(통합채널 생성) 또는 --dst <채널ID>를 쓰세요")
+            channel_id = self.mono_channel_id or "null"
             mention = ""
         res = self._post(channel_id, self._embed(notice, dept, mention))
         return channel_id, res["id"]

@@ -6,6 +6,9 @@ notify/setup_guild.py — 학과별 역할 + 비공개 채널 자동 생성 (워
   - 역할(role): 학과명. 구독 = 이 역할 보유.
   - 비공개 채널: @everyone 숨김 + 해당 역할만 보기 허용. 단과대(college) 카테고리 아래.
   - 생성한 ID를 depts 테이블에 저장.
+  - 통합공지(mono)·감시(debug) 채널: 이름으로 생성/재사용 → app_meta(mono_channel_id·
+    debug_channel_id)에 저장. 런타임이 여기서 읽으므로 secrets에 채널ID를 넣을 필요 없음.
+멱등: DB ID가 아니라 '길드에 같은 이름의 역할/채널이 실제 있는지'로 판단(수동 삭제·재생성과 desync 방지).
 
 실행: python -m notify.setup_guild [--dry]
   --dry : 실제 생성 없이 무엇을 만들지 출력만.
@@ -116,10 +119,25 @@ async def run(gid):
                 if ch and str(d.get("discord_channel_id") or "") != str(ch.id):
                     store.set_dept_discord(did, channel_id=str(ch.id))   # DB 동기화
 
-            # ── 감시(디버그) 채널: 이름으로 자동 생성/재사용 → app_meta에 ID 저장 ──
-            #    학과채널과 달리 역할 게이팅 없음(관리자용). 첫 세팅 시 사람이 채널ID를 안 넣어도 되게.
+            # ── 통합공지(mono)·감시(디버그) 채널: 이름으로 자동 생성/재사용 → app_meta에 ID 저장 ──
+            #    학과채널과 달리 역할 게이팅 없음(mono=전체 공개, debug=관리자용).
+            #    런타임(main)이 DB에서 읽어 Notifier에 주입하므로 사람이 채널ID를 secrets에 안 넣어도 됨.
+            def _find(name):
+                return chs_by_name.get(_norm_ch(name)) or chs_by_name.get(name)
+
+            mono_name = config.MONO_CHANNEL_NAME
+            mono = _find(mono_name)
+            if mono is None:
+                print(f"[통합채널 생성] {mono_name}" + (" (dry)" if DRY else ""))
+                if not DRY:
+                    mono = await guild.create_text_channel(mono_name, reason="sauron 통합공지 채널")
+            else:
+                print(f"[통합채널 존재·재사용] {mono.name} (id={mono.id})")
+            if mono and not DRY:
+                store.set_meta("mono_channel_id", str(mono.id))
+
             dbg_name = config.DEBUG_CHANNEL_NAME
-            dbg = chs_by_name.get(_norm_ch(dbg_name)) or chs_by_name.get(dbg_name)
+            dbg = _find(dbg_name)
             if dbg is None:
                 print(f"[감시채널 생성] {dbg_name}" + (" (dry)" if DRY else ""))
                 if not DRY:
@@ -131,7 +149,7 @@ async def run(gid):
 
             store.checkpoint()
             print(f"[완료] 역할 생성 {created_r}·재사용 {reused_r} / 채널 생성 {created_c}·재사용 {reused_c}"
-                  + (f" / 감시채널 {'준비됨' if dbg else '-'}")
+                  + f" / 통합채널 {'준비됨' if mono else '-'} / 감시채널 {'준비됨' if dbg else '-'}"
                   + (" (dry-run: 실제 생성 없음)" if DRY else ""))
         except Exception as e:
             print(f"[오류] {e}")

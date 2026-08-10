@@ -148,16 +148,12 @@ DEBUG_GUILD_ID = _get("DEBUG_GUILD_ID", DISCORD_GUILD_ID)
 PROD_GUILD_ID = _get("PROD_GUILD_ID", "")
 DISCORD_CHANNEL_PREFIX = _get("DISCORD_CHANNEL_PREFIX", "")  # 학과 채널명 접두(선택)
 
-# --dst mono 대상(통합공지 채널). '값을 지정한 단일 채널 몰빵' = --dst <채널ID>와 같은 메커니즘의 이름표.
-#   비우면 --dst mono 불가(그땐 --dst <채널ID>로 직접). --dst poly(각 학과채널)는 이 값과 무관.
-MONO_CHANNEL_ID = _get("MONO_CHANNEL_ID", "")
-
-# 감시(디버그) 채널 — 크롤/요약 오류 임베드가 가는 곳.
-#   기본: setup_guild가 이름(DEBUG_CHANNEL_NAME)으로 '자동 생성/재사용'하고 그 ID를 DB(app_meta)에 저장.
-#         → 첫 세팅 시 사람이 채널ID를 손으로 넣을 필요가 없다.
-#   수동 지정하려면 DEBUG_CHANNEL_ID에 채널ID를 넣으면 그 값이 우선한다.
-DEBUG_CHANNEL_ID = _get("DEBUG_CHANNEL_ID", "")
-DEBUG_CHANNEL_NAME = _get("DEBUG_CHANNEL_NAME", "사우론-감시")
+# 통합공지(mono, --dst mono 대상)·감시(디버그) 채널 — 둘 다 setup_guild가 '이름'으로
+#   자동 생성/재사용하고 그 채널ID를 DB(app_meta: mono_channel_id·debug_channel_id)에 저장한다.
+#   런타임은 build_components가 DB에서 읽어 Notifier에 주입 → 사람이 채널ID를 secrets에 손으로
+#   넣지 않는다(넣어도 읽지 않음). 채널 '이름'만 바꾸고 싶으면 아래 두 값을 secrets에서 오버라이드.
+MONO_CHANNEL_NAME = _get("MONO_CHANNEL_NAME", "Sauron-Mono")
+DEBUG_CHANNEL_NAME = _get("DEBUG_CHANNEL_NAME", "Sauron-Debug")
 
 # 디버그 모드 단일 식별자. 라우팅은 config가 아니라 '실행 플래그'로만 결정(안전).
 DEBUG_EN = True

@@ -10,7 +10,7 @@ main.py — 진입점.
 
   --dst (어디로 보낼지, 택1, 기본 null):
     null(기본)   전송 안 함(=구 dryrun)
-    mono         사전지정 통합채널(config.MONO_CHANNEL_ID) 하나로 몰빵
+    mono         통합채널(setup_guild가 생성, DB app_meta) 하나로 몰빵
     poly         각 학과 전용 채널로(+@everyone)
     <채널ID>     명시한 단일 채널로
 
@@ -47,11 +47,13 @@ def build_components(logger=None, dst="null", nosummary=False):
         logger.info(f"[LLM] 사용 모델: {model} @ {config.LLM_BASE_URL}")
     except Exception as e:
         logger.info(f"[LLM] 모델 확인 실패({e}) → {summarizer.model}")
-    # 감시채널: config 수동값 우선, 없으면 setup_guild가 저장한 자동생성 ID(app_meta)
-    dbg_ch = config.DEBUG_CHANNEL_ID or store.get_meta("debug_channel_id")
-    notifier = Notifier(logger, dst=dst, debug_channel_id=dbg_ch)
+    # 통합·감시 채널ID는 DB(app_meta)에서만 읽는다 — setup_guild가 생성·저장한 값(secrets 미사용).
+    dbg_ch = store.get_meta("debug_channel_id")
+    mono_ch = store.get_meta("mono_channel_id")
+    notifier = Notifier(logger, dst=dst, debug_channel_id=dbg_ch, mono_channel_id=mono_ch)
     logger.info(f"[전송] dst={notifier.dst} dry={notifier.dry} nosummary={nosummary} "
-                f"감시채널={'설정' if dbg_ch else '없음(setup_guild 필요)'}")
+                f"통합채널={'설정' if mono_ch else '없음'} 감시채널={'설정' if dbg_ch else '없음'}"
+                f"{'' if (mono_ch or dbg_ch) else ' (setup_guild 필요)'}")
     return Components(
         store=store,
         fetcher=Fetcher(),
