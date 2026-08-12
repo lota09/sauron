@@ -168,10 +168,11 @@ def step_seed_notices(py):
 
 
 def step_done(py, using_venv):
-    act = "source .venv/bin/activate && " if using_venv else ""
-    print("\n✅ 세팅 완료. 상시 운영은 아래를 직접 실행하세요(자동 실행 안 함):")
-    print(f"    {act}python main.py run --dst poly")
-    print("    (통합채널로만 보내려면 --dst mono, 각 학과 채널은 --dst poly)")
+    print("\n✅ 세팅 완료. 상시 운영은 sauron.sh 로 실행하세요(자동 실행 안 함):")
+    print("    bash sauron.sh            # 크롤러+구독봇 백그라운드 시작(기본, nohup 불필요)")
+    print("    bash sauron.sh --nobot    # 봇 없이 크롤러만")
+    print("    bash sauron.sh status | stop | restart")
+    print("    로그: logs/sauron.log(크롤러) · logs/bot.log(봇) — 자정마다 회전")
 
 
 def main():

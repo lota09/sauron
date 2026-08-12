@@ -21,11 +21,15 @@ def _find_notice_by_url(store, url):
 
 
 async def _reprocess(c, dept, title, url):
-    """저장된 (title,url)을 재처리: 기존 행 제거 후 _process_new_item 재실행(내용 재fetch·발송·요약)."""
+    """전송(D1)은 즉시, 요약은 큐에 '적재만' 한다(드레인은 호출자가 일괄). 반환 nid.
+    → 여러 건을 돌릴 때 앞 건의 요약을 기다리지 않고 다음 건을 바로 전송(run과 동일 semantics)."""
     await asyncio.to_thread(c.store.forget_url, dept["dept_id"], url)   # 새로 promote되게 비움
-    await _process_new_item(c, dept, {"title": title, "url": url})
-    await drain(c)
-    row = await asyncio.to_thread(_find_notice_by_url, c.store, url)
+    return await _process_new_item(c, dept, {"title": title, "url": url})
+
+
+def _report_one(c, dept, title, url):
+    """드레인 이후 요약 상태 출력."""
+    row = _find_notice_by_url(c.store, url)
     label = f"{dept.get('name_ko') or ''}({dept['dept_id']})"
     if not row:
         print(f"\n  [미처리] {label} :: {title[:40]}")
@@ -62,13 +66,19 @@ async def debug_resummarize(c, n: int = 10):
     if not picked:
         c.log("[redo] 재처리 대상을 찾지 못함(크롤 실패/빈 목록/ N=0).")
         return
-    c.log(f"[redo] {len(picked)}개 처리 시작 (전체 크롤 안 함)")
-    print("\n=== 재처리 결과 ===")
+    c.log(f"[redo] {len(picked)}개: 먼저 전부 전송(D1) → 요약은 이어서 일괄 처리(전송이 요약을 안 기다림)")
+    # 1) 전송 먼저 — 앞 건의 요약 완료를 기다리지 않고 다음 건으로
     for dept, top in picked:
         try:
             await _reprocess(c, dept, top["title"], top["url"])
         except Exception as e:
             c.log(f"[redo 처리 실패] {dept['dept_id']}: {e}")
+    # 2) 쌓인 요약을 일괄 드레인
+    await drain(c)
+    # 3) 결과 출력(요약 상태 확인)
+    print("\n=== 재처리 결과 ===")
+    for dept, top in picked:
+        _report_one(c, dept, top["title"], top["url"])
 
 
 async def query_notices(c, query: str):
@@ -98,4 +108,6 @@ async def query_notices(c, query: str):
         c.log(f"[query] DB에서 제거됨: \"{pick['title'][:40]}\" (다음 크롤에 재감지됨)")
         return
     dept = await asyncio.to_thread(c.store.get_dept, pick["dept_id"]) or {"dept_id": pick["dept_id"]}
-    await _reprocess(c, dept, pick["title"], pick["url"])
+    await _reprocess(c, dept, pick["title"], pick["url"])   # 전송 + 요약 큐 적재
+    await drain(c)                                          # 단건 → 바로 드레인해 결과 표시
+    _report_one(c, dept, pick["title"], pick["url"])

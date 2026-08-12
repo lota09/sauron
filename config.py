@@ -130,12 +130,21 @@ OCR_TIMEOUT = _get_int("OCR_TIMEOUT", 60)
 UPDATE_LIMIT = _get_int("UPDATE_LIMIT", 5)      # 신규가 이보다 많으면 사이트깨짐 의심→대량알림 차단
 SEED_PAGES = _get_int("SEED_PAGES", 3)          # depts.seed_pages 없을 때 기본
 JSON_API_SCAN_PAGES = _get_int("JSON_API_SCAN_PAGES", 12)  # json_api 본문 캐시 미스 시 훑을 최대 페이지수(깊은페이지 재처리)
-REQUEST_TIMEOUT = _get_int("REQUEST_TIMEOUT", 30)
+REQUEST_TIMEOUT = _get_int("REQUEST_TIMEOUT", 30)          # read timeout(초): 연결 후 응답 대기
+REQUEST_CONNECT_TIMEOUT = _get_int("REQUEST_CONNECT_TIMEOUT", 5)  # connect timeout: 죽은 호스트 빠른 실패(30→5초)
+CRAWL_CONCURRENCY = _get_int("CRAWL_CONCURRENCY", 8)       # 목록 fetch 동시 개수: 한 곳이 막혀도 나머지 진행
 CRAWL_INTERVAL_SEC = _get_int("CRAWL_INTERVAL_SEC", 600)  # 10분
+# 크롤러 생존판정: heartbeat가 이 시간 넘게 갱신 안 되면 '멈춤(stale)'. 기본 = 크롤주기×2(한 사이클 놓쳐도 여유).
+RUN_STALE_SEC = _get_int("RUN_STALE_SEC", CRAWL_INTERVAL_SEC * 2)
 USER_AGENT = _get("USER_AGENT",
                   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 INFOCOM_RETRY = _get_int("INFOCOM_RETRY", 3)    # 학교서버 버그 F5 흉내 재시도 횟수
+
+# ── 로깅 ───────────────────────────────────────
+# 콘솔 + logs/ 에 일자별 회전 파일(자정 롤오버). sauron.sh는 redirect 없이 실행하면 됨.
+LOG_DIR = _get("LOG_DIR", os.path.join(_HERE, "logs"))
+LOG_BACKUP_DAYS = _get_int("LOG_BACKUP_DAYS", 14)   # 회전 로그 보관 일수
 
 # ── 디스코드 ─────────────────────────────────────────
 DISCORD_TOKEN_FILE = _get("DISCORD_TOKEN_FILE", os.path.join(_HERE, "secrets", "discord-api-info.json"))

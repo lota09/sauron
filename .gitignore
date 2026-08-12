@@ -23,3 +23,7 @@ experiments/vision_probe/out_multi/
 
 # 임시 정리 폴더(전송/추출 잔여물 — 수동 삭제용)
 _to_delete/
+
+# 로그(일자별 회전) · 실행 PID
+logs/
+.run/

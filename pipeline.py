@@ -11,7 +11,6 @@ import json
 
 import config
 from crawl.diff import detect_new, FetchEmpty, TooManyNew
-from crawl.fetcher import Fetcher, FetchError
 
 
 def _label(dept):
@@ -75,20 +74,31 @@ async def _process_new_item(c, dept, item):
 async def crawl_pass(c):
     """1회 크롤 패스. 학과 단위 오류는 격리(감시채널 디버그)."""
     depts = await asyncio.to_thread(c.store.active_depts)
+
+    # 목록 fetch(detect_new)를 동시에 — 한 사이트가 막혀도 나머지는 진행(전체 지연 = 합계가 아니라 최장 1곳).
+    #   신규 처리(_process_new_item: 상세fetch+전송)는 감지 결과를 모아 순차로(전송 파이프라인 구조 유지).
+    sem = asyncio.Semaphore(config.CRAWL_CONCURRENCY)
+
+    async def _detect(dept):
+        async with sem:
+            try:
+                return dept, await asyncio.to_thread(detect_new, c.store, c.fetcher, dept), None
+            except Exception as e:
+                return dept, None, e
+
+    results = await asyncio.gather(*[_detect(d) for d in depts])
+
     total_new = 0
-    for dept in depts:
-        try:
-            new_items = await asyncio.to_thread(detect_new, c.store, c.fetcher, dept)
-        except FetchEmpty as e:
-            c.log(f"[빈 목록] {_label(dept)}: {e}")
-            continue
-        except TooManyNew as e:
-            c.log(f"[대량알림 차단] {_label(dept)}: {e}")
-            c.notifier.debug(f"{_label(dept)} 신규 {e.count}건 초과 — 사이트 구조 변경 의심")
-            continue
-        except (FetchError, Exception) as e:
-            c.log(f"[크롤 실패] {_label(dept)}: {e}")
-            c.notifier.debug(f"크롤 실패: {_label(dept)}\n{e}")
+    for dept, new_items, err in results:
+        if err is not None:
+            if isinstance(err, FetchEmpty):
+                c.log(f"[빈 목록] {_label(dept)}: {err}")
+            elif isinstance(err, TooManyNew):
+                c.log(f"[대량알림 차단] {_label(dept)}: {err}")
+                c.notifier.debug(f"{_label(dept)} 신규 {err.count}건 초과 — 사이트 구조 변경 의심")
+            else:
+                c.log(f"[크롤 실패] {_label(dept)}: {err}")
+                c.notifier.debug(f"크롤 실패: {_label(dept)}\n{err}")
             continue
 
         total_new += len(new_items)

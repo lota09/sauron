@@ -48,7 +48,7 @@ class Fetcher:
             "Accept-Language": "ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3",
             "Connection": "keep-alive",
         })
-        self.timeout = config.REQUEST_TIMEOUT
+        self.timeout = (config.REQUEST_CONNECT_TIMEOUT, config.REQUEST_TIMEOUT)  # (connect, read): 죽은 호스트 5초 실패
         self._json_cache = {}   # json_api: dept_id → {notice_url: item} (scrape_list이 채움)
 
     # ── HTTP with infocom retry ────────────────────────

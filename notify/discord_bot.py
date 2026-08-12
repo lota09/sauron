@@ -12,6 +12,7 @@ notify/discord_bot.py — 구독 봇 (C안, 임베드+3단계). discord.py 2.x.
 실행: python -m notify.discord_bot   (secrets/discord-api-info.json 의 bot_token 필요)
 권한: 봇에 Manage Roles + 대상 역할들보다 봇 역할이 상위.
 """
+import asyncio
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import sys
 from datetime import datetime, timezone
 
 import config
+from core import runstatus
 from db.store import Store
 from notify.subscribe_logic import group_by_college, dept_select_options, diff_for_subset
 
@@ -53,13 +55,9 @@ def _load_token():
 
 
 def _setup_logging():
-    if log.handlers:
-        return
-    h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-                                     "%H:%M:%S"))
-    log.addHandler(h)
-    log.setLevel(logging.INFO)
+    # 콘솔 + logs/bot.log(일자별 회전). 크롤러(sauron.log)와 파일 분리(프로세스별 회전 충돌 방지).
+    from core.log import setup_logger
+    setup_logger("sauron.bot", "bot.log")
 
 
 if _DISCORD:
@@ -124,6 +122,38 @@ if _DISCORD:
         if failed:
             line += f"\n⚠️ 역할 권한 부족(봇 역할 위치 확인): {', '.join(failed)}"
         return line
+
+    # ── 상태확인(/상태확인) ────────────────────────────
+    #   크롤러(main.py run) 생존/하트비트를 core.runstatus 로 조회. presence는 main 크롤주기에 맞춰 갱신.
+    _STATE = {
+        "running": ("🟢 정상 작동 중", 0x23A55A, "공지 감시 중"),
+        "stale":   ("🟡 응답 없음(멈춤·붕괴 의심)", 0xF0B232, "크롤러 멈춤 의심"),
+        "stopped": ("🔴 정지", 0xF23F43, "크롤러 정지"),
+    }
+
+    def _fmt_dur(sec):
+        if sec is None:
+            return "-"
+        sec = int(sec)
+        h, m = sec // 3600, (sec % 3600) // 60
+        if h:
+            return f"{h}시간 {m}분"
+        if m:
+            return f"{m}분"
+        return f"{sec}초"
+
+    def _status_embed(st):
+        title, color, _ = _STATE.get(st["state"], ("⚪ 상태 미상", 0x949BA4, "상태 미상"))
+        e = discord.Embed(title=title, color=color)
+        if st["state"] == "stopped" and not st.get("pid"):
+            e.description = "실행 이력이 없습니다(한 번도 안 돌았거나 DB 초기화됨)."
+            return e
+        e.add_field(name="가동 시간", value=_fmt_dur(st.get("uptime")), inline=True)
+        e.add_field(name="마지막 활동", value=f"{_fmt_dur(st.get('since_beat'))} 전", inline=True)
+        e.add_field(name="PID", value=f"{st.get('pid')} · {'생존' if st.get('alive') else '없음'}", inline=True)
+        if st.get("last_new") is not None:
+            e.add_field(name="직전 크롤 신규", value=f"{st['last_new']}건", inline=True)
+        return e
 
     # ── Select 컴포넌트 ────────────────────────────────
     class DeptMultiSelect(discord.ui.Select):
@@ -311,7 +341,19 @@ if _DISCORD:
         client = discord.Client(intents=intents)
         tree = app_commands.CommandTree(client)
         guild_obj = discord.Object(id=int(gid)) if gid else None
-        _persist = {"added": False}   # 영구 View 중복등록 방지 플래그
+        _persist = {"added": False, "presence": False}   # 영구 View·presence 루프 중복시작 방지
+
+        async def _presence_loop():
+            # main 크롤주기에 맞춰(하드코딩 X) 크롤러 상태를 봇 presence로 표시. 최대 1주기 늦을 수 있음(→ /상태확인로 실시간).
+            while True:
+                try:
+                    st = await asyncio.to_thread(runstatus.read_status, store, config.RUN_STALE_SEC)
+                    emoji = {"running": "🟢", "stale": "🟡", "stopped": "🔴"}.get(st["state"], "⚪")
+                    label = _STATE.get(st["state"], ("", 0, "상태 미상"))[2]
+                    await client.change_presence(activity=discord.CustomActivity(name=f"{emoji} {label}"))
+                except Exception as e:
+                    log.warning("presence 갱신 실패: %s", e)
+                await asyncio.sleep(config.CRAWL_INTERVAL_SEC)
 
         @client.event
         async def on_ready():
@@ -320,11 +362,19 @@ if _DISCORD:
             if not _persist["added"]:
                 client.add_view(SubscribeEntryView(store))
                 _persist["added"] = True
+            if not _persist["presence"]:
+                _persist["presence"] = True
+                asyncio.create_task(_presence_loop())
             await (tree.sync(guild=guild_obj) if guild_obj else tree.sync())
             log.info("로그인: %s | %s 서버(%s)", client.user,
                      "디버깅" if debug else "실서비스", gid or "전역")
             n = {k: len(store.depts_by_kind(k, with_role=True)) for k in (STEP_GENERAL, STEP_MAJOR, STEP_ETC)}
             log.info("구독가능(역할보유) 학과: 공통 %d · 전공 %d · 기타 %d", n["general"], n["major"], n["etc"])
+
+        @tree.command(name="상태확인", description="공지 크롤러(sauron)의 현재 작동 상태", guild=guild_obj)
+        async def status_cmd(interaction: discord.Interaction):
+            st = await asyncio.to_thread(runstatus.read_status, store, config.RUN_STALE_SEC)
+            await interaction.response.send_message(embed=_status_embed(st), ephemeral=True)
 
         @tree.command(name="구독", description="학과·공통 공지 구독을 설정합니다", guild=guild_obj)
         async def subscribe(interaction: discord.Interaction):

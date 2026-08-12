@@ -28,6 +28,7 @@ import sys
 
 import config
 from core.log import setup_logger
+from core.runstatus import record_start, beat
 from core.queue import WorkQueue
 from crawl.fetcher import Fetcher
 from db.store import Store
@@ -73,13 +74,16 @@ async def _run_forever(c):
         c.log(f"[부팅 재적재] 미완 요약 {n}건")
     workers = [asyncio.create_task(worker_loop(c)) for _ in range(config.LLM_MAX_CONCURRENCY)]
     c.log(f"[start] 워커 {len(workers)}개 · 크롤주기 {config.CRAWL_INTERVAL_SEC}s · LLM {config.LLM_BASE_URL}")
+    record_start(c.store)          # 상태확인용: run_pid·시작시각 기록
     try:
         while True:
+            new_n = 0
             try:
-                await crawl_pass(c)
+                new_n = await crawl_pass(c)
             except Exception as e:
                 c.log(f"[crawl_pass 예외] {e}")
                 c.notifier.debug(f"crawl_pass 예외: {e}")
+            beat(c.store, new_n)   # 상태확인용: heartbeat 갱신(+직전 신규 건수)
             c.store.checkpoint()
             await asyncio.sleep(config.CRAWL_INTERVAL_SEC)
     finally:
