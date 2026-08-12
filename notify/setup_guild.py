@@ -2,13 +2,17 @@
 """
 notify/setup_guild.py — 학과별 역할 + 비공개 채널 자동 생성 (워크플로 step 3).
 
-활성 학과 중 role_id/channel_id 가 없는 것만 생성(idempotent):
+역할 + 채널 생성/갱신(idempotent, 소급 적용):
   - 역할(role): 학과명. 구독 = 이 역할 보유.
-  - 비공개 채널: @everyone 숨김 + 해당 역할만 보기 허용. 단과대(college) 카테고리 아래.
-  - 생성한 ID를 depts 테이블에 저장.
-  - 통합공지(mono)·감시(debug) 채널: 이름으로 생성/재사용 → app_meta(mono_channel_id·
-    debug_channel_id)에 저장. 런타임이 여기서 읽으므로 secrets에 채널ID를 넣을 필요 없음.
+  - 학과 채널: @everyone 숨김 + 해당 역할만 '열람'. 전송은 봇/관리자만(역할 보유자도 전송 불가).
+    단과대(college) 카테고리 아래. 기존 채널도 매 실행 시 권한·카테고리를 desired로 소급 갱신.
+  - 통합공지(mono)·감시(debug) 채널: 전송은 봇/관리자만. 없을 때만 생성(카테고리 미지정=top-level),
+    카테고리는 지정/변경하지 않음(관리자가 옮긴 위치 보존). app_meta에 저장 → 런타임이 여기서 읽음.
+  - 생성/확인한 역할·채널 ID를 depts 테이블에 동기화.
 멱등: DB ID가 아니라 '길드에 같은 이름의 역할/채널이 실제 있는지'로 판단(수동 삭제·재생성과 desync 방지).
+소급: 학과 채널은 권한/카테고리(단과대)를 desired와 다를 때만 edit. mono/debug는 권한만, 카테고리 불변.
+merge: 소급 시 sauron '관리' overwrite(@everyone·해당 역할·봇)만 덮고, 그 외(관리자가 붙인
+  developers 등)의 overwrite는 보존. 관리자 전송은 Administrator가 overwrite를 무시하므로 자동 성립.
 
 실행: python -m notify.setup_guild [--dry]
   --dry : 실제 생성 없이 무엇을 만들지 출력만.
@@ -52,6 +56,50 @@ async def _ensure_category(guild, name, cache):
     return cat
 
 
+_KEEP = object()   # _sync_perms에서 '카테고리 건드리지 않음' 표식
+
+
+def _dept_overwrites(guild, role, me):
+    """학과 채널: @everyone 숨김 · 해당 역할만 열람(전송 불가) · 봇만 전송.
+    관리자(Administrator 권한)는 overwrite를 무시하고 전송 가능하므로 별도 허용 불필요."""
+    ow = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False, send_messages=False),
+        role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+    }
+    if me:
+        ow[me] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+    return ow
+
+
+def _public_overwrites(guild, me):
+    """통합/감시 채널: 전체 열람 · 전송은 봇/관리자만."""
+    ow = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
+    if me:
+        ow[me] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+    return ow
+
+
+async def _sync_perms(ch, managed, cat=_KEEP):
+    """sauron이 '관리하는' overwrite(managed: {target:PO})만 소급 적용하고, 그 외 역할
+    (예: 관리자가 붙인 developers)의 overwrite는 보존(merge). 카테고리는 cat 지정 시에만.
+    실제로 달라질 때만 edit. 반환: 변경했는지."""
+    current = dict(ch.overwrites)            # 기존 전체(타 역할 overwrite 포함)
+    desired = dict(current)
+    for tgt, po in managed.items():          # sauron 관리 대상만 덮어씀 → 나머지는 그대로
+        desired[tgt] = po
+    kwargs = {}
+    if cat is not _KEEP:
+        cur = ch.category.id if ch.category else None
+        if cur != (cat.id if cat else None):
+            kwargs["category"] = cat
+    if desired != current:
+        kwargs["overwrites"] = desired
+    if kwargs and not DRY:
+        await ch.edit(reason="sauron 권한/카테고리 소급(타 역할 overwrite 보존)", **kwargs)
+        return True
+    return False
+
+
 async def run(gid):
     store = Store(config.DB_PATH)
     intents = discord.Intents.default()
@@ -69,9 +117,13 @@ async def run(gid):
                 all_channels = list(getattr(guild, "channels", []))
             chs_by_name = {c.name: c for c in all_channels}      # c.name은 디스코드 정규화된 이름
 
+            def _find(cname):
+                return chs_by_name.get(_norm_ch(cname)) or chs_by_name.get(cname)
+
+            me = guild.me or guild.get_member(client.user.id)     # 봇 멤버(전송 허용 overwrite용)
             depts = store.active_depts()
             cat_cache = {}
-            created_r = created_c = reused_r = reused_c = 0
+            created_r = created_c = reused_r = reused_c = updated_c = 0
             for d in depts:
                 did, name = d["dept_id"], (d.get("name_ko") or d["dept_id"])
                 # 카테고리는 college가 아니라 kind로 결정(college 컬럼은 '단과대'로 순수 유지).
@@ -98,41 +150,49 @@ async def run(gid):
                     store.set_dept_discord(did, role_id=str(role.id))    # DB를 실제 ID로 동기화
                 role_id = str(role.id) if role else None
 
-                # ── 채널: 정규화 이름으로 실제 존재 확인 → 없으면 생성, 있으면 재사용 ──
+                # ── 채널: 없으면 생성, 있으면 권한·카테고리 소급 갱신(열람=역할, 전송=관리자만) ──
                 chname = (config.DISCORD_CHANNEL_PREFIX + name)
-                ch = chs_by_name.get(_norm_ch(chname)) or chs_by_name.get(chname)
+                ch = _find(chname)
+                ow = _dept_overwrites(guild, role, me) if role else None
                 if ch is None:
                     print(f"[채널 생성] {college} / {chname}" + (" (dry)" if DRY else ""))
-                    if not DRY and role_id:
+                    if not DRY and role and ow:
                         cat = await _ensure_category(guild, college, cat_cache)
-                        overwrites = {
-                            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-                            guild.get_role(int(role_id)): discord.PermissionOverwrite(view_channel=True),
-                        }
-                        ch = await guild.create_text_channel(chname, category=cat, overwrites=overwrites,
+                        ch = await guild.create_text_channel(chname, category=cat, overwrites=ow,
                                                              reason="sauron 학과 채널")
                         chs_by_name[ch.name] = ch
                         created_c += 1
-                else:
-                    reused_c += 1
-                    print(f"[채널 존재·재사용] {college} / {ch.name} (id={ch.id})")
+                elif ow:
+                    cat = await _ensure_category(guild, college, cat_cache)
+                    if DRY:
+                        print(f"[채널 점검·소급(dry)] {college} / {ch.name}")
+                    elif await _sync_perms(ch, ow, cat):
+                        updated_c += 1
+                        print(f"[채널 갱신] {college} / {ch.name} (권한/카테고리)")
+                    else:
+                        reused_c += 1
+                        print(f"[채널 유지] {college} / {ch.name} (id={ch.id})")
                 if ch and str(d.get("discord_channel_id") or "") != str(ch.id):
                     store.set_dept_discord(did, channel_id=str(ch.id))   # DB 동기화
 
-            # ── 통합공지(mono)·감시(디버그) 채널: 이름으로 자동 생성/재사용 → app_meta에 ID 저장 ──
-            #    학과채널과 달리 역할 게이팅 없음(mono=전체 공개, debug=관리자용).
-            #    런타임(main)이 DB에서 읽어 Notifier에 주입하므로 사람이 채널ID를 secrets에 안 넣어도 됨.
-            def _find(name):
-                return chs_by_name.get(_norm_ch(name)) or chs_by_name.get(name)
-
+            # ── 통합공지(mono)·감시(디버그) 채널: 이름으로 생성/소급갱신 → app_meta에 ID 저장 ──
+            #    전체 열람 · 전송은 봇/관리자만(전송 잠금). 런타임(main)이 DB에서 읽어 Notifier에 주입.
+            pub_ow = _public_overwrites(guild, me)
+            # mono/debug: 없을 때만 생성(카테고리 미지정 → top-level). 카테고리는 sauron이 지정/변경하지
+            #   않는다 — 관리자가 어느 카테고리(예: developers)로 옮겨도 그대로 둔다(_sync_perms cat 미전달).
+            #   권한은 merge라 관리자가 붙인 타 역할 overwrite도 보존.
             mono_name = config.MONO_CHANNEL_NAME
             mono = _find(mono_name)
             if mono is None:
                 print(f"[통합채널 생성] {mono_name}" + (" (dry)" if DRY else ""))
                 if not DRY:
-                    mono = await guild.create_text_channel(mono_name, reason="sauron 통합공지 채널")
+                    mono = await guild.create_text_channel(mono_name, overwrites=pub_ow, reason="sauron 통합공지 채널")
+            elif DRY:
+                print(f"[통합채널 점검·소급(dry)] {mono.name}")
+            elif await _sync_perms(mono, pub_ow):
+                print(f"[통합채널 갱신] {mono.name} (전송 권한)")
             else:
-                print(f"[통합채널 존재·재사용] {mono.name} (id={mono.id})")
+                print(f"[통합채널 유지] {mono.name} (id={mono.id})")
             if mono and not DRY:
                 store.set_meta("mono_channel_id", str(mono.id))
 
@@ -141,14 +201,19 @@ async def run(gid):
             if dbg is None:
                 print(f"[감시채널 생성] {dbg_name}" + (" (dry)" if DRY else ""))
                 if not DRY:
-                    dbg = await guild.create_text_channel(dbg_name, reason="sauron 감시/디버그 채널")
+                    dbg = await guild.create_text_channel(dbg_name, overwrites=pub_ow, reason="sauron 감시/디버그 채널")
+            elif DRY:
+                print(f"[감시채널 점검·소급(dry)] {dbg.name}")
+            elif await _sync_perms(dbg, pub_ow):
+                print(f"[감시채널 갱신] {dbg.name} (전송 권한)")
             else:
-                print(f"[감시채널 존재·재사용] {dbg.name} (id={dbg.id})")
+                print(f"[감시채널 유지] {dbg.name} (id={dbg.id})")
             if dbg and not DRY:
                 store.set_meta("debug_channel_id", str(dbg.id))   # main이 여기서 읽어 Notifier에 주입
 
             store.checkpoint()
-            print(f"[완료] 역할 생성 {created_r}·재사용 {reused_r} / 채널 생성 {created_c}·재사용 {reused_c}"
+            print(f"[완료] 역할 생성 {created_r}·재사용 {reused_r}"
+                  + f" / 채널 생성 {created_c}·갱신 {updated_c}·유지 {reused_c}"
                   + f" / 통합채널 {'준비됨' if mono else '-'} / 감시채널 {'준비됨' if dbg else '-'}"
                   + (" (dry-run: 실제 생성 없음)" if DRY else ""))
         except Exception as e:

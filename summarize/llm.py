@@ -73,6 +73,17 @@ class ServerError(SummaryError):
     reason = "server"
 
 
+def _err_message(r):
+    """API 오류 응답에서 사람이 읽을 error.message 추출(없으면 원문 일부). 예: OlliteRT 컨텍스트 초과 안내."""
+    try:
+        m = (r.json().get("error") or {}).get("message")
+        if m:
+            return m.strip()
+    except Exception:
+        pass
+    return (getattr(r, "text", "") or "")[:500]
+
+
 def _classify_http(status, body):
     b = (body or "").lower()
     if status in (400, 404) and "model" in b:
@@ -256,7 +267,7 @@ class OpenAICompatSummarizer:
         except self._CONN_EXC as e:
             raise ConnectionErrorLLM(f"연결 실패: {type(e).__name__}") from e
         if r.status_code != 200:
-            raise _classify_http(r.status_code, r.text[:300])   # 모델오류 vs 서버오류 분류
+            raise _classify_http(r.status_code, _err_message(r))   # 모델오류 vs 서버오류 분류(응답 message 노출)
         data = r.json()
         try:
             return data["choices"][0]["message"]["content"]
@@ -270,7 +281,7 @@ class OpenAICompatSummarizer:
             with requests.post(url, json=payload, headers=self._headers(),
                                timeout=(self.connect_timeout, self.timeout), stream=True) as r:
                 if r.status_code != 200:
-                    raise _classify_http(r.status_code, r.text[:300])
+                    raise _classify_http(r.status_code, _err_message(r))
                 for line in r.iter_lines(decode_unicode=True):
                     if SHUTDOWN.is_set():                          # 종료 신호 → 즉시 스트림 중단
                         break
