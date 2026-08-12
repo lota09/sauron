@@ -25,7 +25,8 @@ _pids() {                        # <name> → 실행 중 PID들(pid파일 + pgre
   local name="$1" pidf="$PID_DIR/$1.pid" ids=""
   [ -f "$pidf" ] && kill -0 "$(cat "$pidf" 2>/dev/null)" 2>/dev/null && ids="$(cat "$pidf")"
   ids="$ids $(pgrep -f "$(_pat_of "$name")" 2>/dev/null || true)"
-  echo $ids | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' '
+  # grep이 매칭 0이면 종료코드 1 → set -e/pipefail로 스크립트가 죽으므로 반드시 || true.
+  echo $ids | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' ' || true
 }
 
 _start() {                       # <name> <python args...>
