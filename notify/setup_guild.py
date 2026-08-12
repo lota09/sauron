@@ -42,6 +42,16 @@ def _norm_ch(name):
     return re.sub(r"-{2,}", "-", n)
 
 
+def _role_name(d):
+    """역할 이름 = name_ko에서 앞의 단과대(college)를 뗀 형태. 예: 'IT대학 AI융합학부' → 'AI융합학부'.
+    (역할 매칭/생성에만 사용. 채널 이름은 name_ko 그대로 둔다.)"""
+    full = (d.get("name_ko") or d["dept_id"]).strip()
+    col = (d.get("college") or "").strip()
+    if col and full.startswith(col):
+        return full[len(col):].strip() or full
+    return full
+
+
 def _token():
     with open(config.DISCORD_TOKEN_FILE, encoding="utf-8") as f:
         return json.load(f)["bot_token"]
@@ -135,22 +145,23 @@ async def run(gid):
                 else:
                     college = (d.get("college") or "").strip() or "기타"
 
-                # ── 역할: 이름으로 실제 존재 확인 → 없으면 생성, 있으면 재사용 ──
-                role = roles_by_name.get(name)
+                # ── 역할: name_ko에서 단과대 뗀 이름으로 존재 확인 → 없으면 생성, 있으면 재사용 ──
+                rname = _role_name(d)      # 예: 'IT대학 AI융합학부' → 'AI융합학부'
+                role = roles_by_name.get(rname)
                 if role is None:
-                    print(f"[역할 생성] {name}" + (" (dry)" if DRY else ""))
+                    print(f"[역할 생성] {rname}" + (" (dry)" if DRY else ""))
                     if not DRY:
-                        role = await guild.create_role(name=name, mentionable=False, reason="sauron 학과 역할")
-                        roles_by_name[name] = role
+                        role = await guild.create_role(name=rname, mentionable=False, reason="sauron 학과 역할")
+                        roles_by_name[rname] = role
                         created_r += 1
                 else:
                     reused_r += 1
-                    print(f"[역할 존재·재사용] {name} (id={role.id})")
+                    print(f"[역할 존재·재사용] {rname} (id={role.id})")
                 if role and str(d.get("discord_role_id") or "") != str(role.id):
                     store.set_dept_discord(did, role_id=str(role.id))    # DB를 실제 ID로 동기화
-                role_id = str(role.id) if role else None
 
                 # ── 채널: 없으면 생성, 있으면 권한·카테고리 소급 갱신(열람=역할, 전송=관리자만) ──
+                #   채널 이름은 name_ko 그대로(단과대 카테고리로 그룹핑되므로).
                 chname = (config.DISCORD_CHANNEL_PREFIX + name)
                 ch = _find(chname)
                 ow = _dept_overwrites(guild, role, me) if role else None
@@ -162,16 +173,20 @@ async def run(gid):
                                                              reason="sauron 학과 채널")
                         chs_by_name[ch.name] = ch
                         created_c += 1
+                elif DRY:
+                    # dry는 역할을 실제로 안 만들어 ow가 None일 수 있음 → 존재 사실만 보고(권한 소급은 실행 때).
+                    print(f"[채널 존재·소급예정(dry)] {college} / {ch.name}")
                 elif ow:
                     cat = await _ensure_category(guild, college, cat_cache)
-                    if DRY:
-                        print(f"[채널 점검·소급(dry)] {college} / {ch.name}")
-                    elif await _sync_perms(ch, ow, cat):
+                    if await _sync_perms(ch, ow, cat):
                         updated_c += 1
                         print(f"[채널 갱신] {college} / {ch.name} (권한/카테고리)")
                     else:
                         reused_c += 1
                         print(f"[채널 유지] {college} / {ch.name} (id={ch.id})")
+                else:
+                    reused_c += 1
+                    print(f"[채널 유지·역할미비] {college} / {ch.name}")
                 if ch and str(d.get("discord_channel_id") or "") != str(ch.id):
                     store.set_dept_discord(did, channel_id=str(ch.id))   # DB 동기화
 

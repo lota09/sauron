@@ -57,13 +57,17 @@ class Notifier:
     def _headers(self):
         return {"Authorization": f"Bot {self.token}", "Content-Type": "application/json"}
 
-    def _post(self, channel_id, embed):
+    def _post(self, channel_id, embed, allow_role=None):
         if self.dry:
             self._fake += 1
             self._log(f"[DRY send] ch={channel_id} :: {embed['title']}")
             return {"id": f"dry-{self._fake}"}
+        # 멘션 오발신 방지: 기본 전부 억제. poly면 해당 역할만 허용(역할 mentionable=False라도 핑 가능 —
+        #   봇에 '모든 역할 멘션' 권한 필요). 현재 멘션은 임베드 안이라, content로 옮기기 전까진 참고용.
+        am = {"parse": [], "roles": [str(allow_role)]} if allow_role else {"parse": []}
         r = requests.post(f"{API}/channels/{channel_id}/messages",
-                          headers=self._headers(), data=json.dumps({"embeds": [embed]}), timeout=30)
+                          headers=self._headers(),
+                          data=json.dumps({"embeds": [embed], "allowed_mentions": am}), timeout=30)
         if r.status_code not in (200, 201):
             raise RuntimeError(f"디스코드 전송 실패 {r.status_code} (ch={channel_id}): {r.text[:200]}")
         return r.json()
@@ -105,8 +109,9 @@ class Notifier:
 
     def _resolve_channel(self, dept):
         """dst에 따라 (channel_id, mention) 결정."""
-        if self.dst == "poly":                                   # 각 학과 전용 채널(+@everyone)
-            return dept.get("discord_channel_id"), "@everyone"
+        if self.dst == "poly":                                   # 각 학과 전용 채널(+해당 역할 멘션)
+            rid = dept.get("discord_role_id")
+            return dept.get("discord_channel_id"), (f"<@&{rid}>" if rid else "")
         if self.dst == "mono":                                   # 통합채널 몰빵(무멘션)
             return self.mono_channel_id, ""
         if self.dst.isdigit():                                   # 명시한 단일 채널(무멘션)
@@ -116,6 +121,7 @@ class Notifier:
     # ── 공개 API ──────────────────────────────────────
     def send_new(self, notice, dept):
         channel_id, mention = self._resolve_channel(dept)
+        allow_role = dept.get("discord_role_id") if (self.dst == "poly" and mention) else None
         if not channel_id:
             # 대상 채널 없음 → 통합채널 폴백. 왜 폴백했는지 로그로 드러낸다(조용한 오배송 방지).
             if self.dst == "poly":
@@ -129,7 +135,8 @@ class Notifier:
                           "`python -m notify.setup_guild` 실행(통합채널 생성) 또는 --dst <채널ID>를 쓰세요")
             channel_id = self.mono_channel_id or "null"
             mention = ""
-        res = self._post(channel_id, self._embed(notice, dept, mention))
+            allow_role = None                                    # 통합채널 폴백 시 역할 핑 안 함
+        res = self._post(channel_id, self._embed(notice, dept, mention), allow_role)
         return channel_id, res["id"]
 
     def edit_summary(self, channel_id, message_id, notice, dept):

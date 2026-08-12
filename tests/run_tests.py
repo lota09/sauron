@@ -435,9 +435,9 @@ def test_dst_routing():
           P(["m", "run", "--dst", "1530567154473373837"]) == ("run", None, None, "1530567154473373837", False), "")
     check("query 검색어", P(["m", "query", "수강신청", "--dst", "mono"]) == ("query", None, "수강신청", "mono", False), "")
     # 라우팅: dst별 (channel, mention)
-    dept = {"discord_channel_id": "REAL"}
+    dept = {"discord_channel_id": "REAL", "discord_role_id": "R9"}
     chp, mp = Notifier(dst="poly")._resolve_channel(dept)
-    check("poly→학과채널·@everyone", chp == "REAL" and mp == "@everyone", f"{chp}/{mp}")
+    check("poly→학과채널·역할멘션", chp == "REAL" and mp == "<@&R9>", f"{chp}/{mp}")
     chm, mm = Notifier(dst="mono", mono_channel_id="MONO")._resolve_channel(dept)
     check("mono→통합채널(주입)·무멘션", chm == "MONO" and mm == "", f"{chm}/{mm}")
     chid, mid = Notifier(dst="1530567154473373837")._resolve_channel(dept)
