@@ -1,7 +1,9 @@
 # ── 런타임 핵심 (무의존 철학: 최소) ──
 requests>=2.31
-beautifulsoup4>=4.12
-lxml>=5.0
+beautifulsoup4>=4.12          # 파서는 표준 html.parser 사용 → lxml 불필요(ARM 컴파일 회피)
+
+# ── 디스코드 발송/구독 봇 (notify/notifier·setup_guild·discord_bot 실행 시) ──
+discord.py>=2.3
 
 # ── 비전(이미지 요약) 권장 ──
 # 실측: 포스터가 2479x3504(~1MB)까지 커서 여러 장을 원본 그대로 보내면 모델이 뭉뚱그린다(날짜 놓침).
@@ -10,16 +12,7 @@ lxml>=5.0
 Pillow>=10.0
 
 # ── OCR (선택; 타겟 기기에서만 설치 · RAM 주의) ──
-# Tesseract 백엔드(가벼움): 시스템 tesseract-ocr, tesseract-ocr-kor + 아래
-#   pytesseract>=0.3.10
-#   Pillow>=10.0
-# PaddleOCR 백엔드(정확·무거움; 온디맨드 로드 권장):
-#   paddleocr
-#   Pillow>=10.0
-#   numpy
-
-# ── 디스코드 구독 봇 (notify/discord_bot.py, setup_guild.py 실행 시) ──
-# discord.py>=2.3
-
+# Tesseract 백엔드(가벼움): 시스템 tesseract-ocr, tesseract-ocr-kor + pytesseract>=0.3.10
+# PaddleOCR 백엔드(정확·무거움; 온디맨드 로드 권장): paddleocr, numpy
+#
 # 표준 asyncio 사용(aiohttp/openai/apscheduler 불필요). 요약 LLM은 OpenAI 호환 REST를 requests로 직접 호출.
-# 크롤/요약 파이프라인은 discord.py 없이도 동작(봇만 별도 프로세스).
