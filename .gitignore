@@ -27,3 +27,6 @@ _to_delete/
 # 로그(일자별 회전) · 실행 PID
 logs/
 .run/
+
+# 일회성 공지 스크립트(개발자 ID 하드코딩)
+experiments/announce.py

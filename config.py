@@ -176,6 +176,11 @@ DEV_ROLE_NAME = _get("DEV_ROLE_NAME", "developers")
 DEBUG_EN = True
 
 ICON_DEFAULT = _get("ICON_DEFAULT", "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg")
+# 비-공지(디버그·자체공지 등 '사우론의 눈' footer) 임베드용 아이콘.
+#   ICON_DEBUG_FILE 이 존재하면 그 로컬 이미지를 attachment://로 업로드해 쓴다(URL 만료 회피).
+#   없으면 ICON_DEBUG(URL)로 폴백. ⚠ Discord 첨부 CDN URL은 ex/is/hm 서명이 있어 ~24h면 만료됨.
+ICON_DEBUG_FILE = _get("ICON_DEBUG_FILE", os.path.join(_HERE, "assets", "icon_debug.png"))
+ICON_DEBUG = _get("ICON_DEBUG", "https://cdn.discordapp.com/attachments/1355611235156234473/1537041889218400296/image.png?ex=6a7d994f&is=6a7c47cf&hm=72fdd9f143fac98370855ed7ccd6d51a85a00233edf9c23f4c72a87ecc3e899f&")
 
 
 def active_guild_id(debug=None):

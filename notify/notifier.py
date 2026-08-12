@@ -36,6 +36,16 @@ def _load_token():
         return None
 
 
+def _footer_icon():
+    """비-공지(디버그·자체공지) 임베드 푸터 아이콘 → (icon_url, local_path).
+    로컬 파일(config.ICON_DEBUG_FILE)이 있으면 attachment://로 업로드해 쓴다(CDN URL 만료 회피).
+    없으면 ICON_DEBUG(URL)로 폴백."""
+    path = getattr(config, "ICON_DEBUG_FILE", None)
+    if path and os.path.exists(path):
+        return f"attachment://{os.path.basename(path)}", path
+    return config.ICON_DEBUG, None
+
+
 class Notifier:
     def __init__(self, logger=None, dst="null", debug_channel_id=None, mono_channel_id=None,
                  dev_role_id=None):
@@ -149,11 +159,12 @@ class Notifier:
         self._patch(channel_id, message_id, self._embed(notice, dept))   # 임베드만 갱신, content(멘션) 보존
 
     def debug(self, content):
+        icon_url, icon_file = _footer_icon()   # 로컬 아이콘 있으면 attachment://, 없으면 URL 폴백
         embed = {
             "title": "⚠️ 디버그 메시지",
             "description": f"​\n{content}",
             "color": DEBUG_COLOR,
-            "footer": {"text": "사우론의 눈"},
+            "footer": {"text": "사우론의 눈", "icon_url": icon_url},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         channel = self.debug_channel_id
@@ -161,18 +172,25 @@ class Notifier:
             return          # 감시채널 미설정(setup_guild 미실행) 또는 토큰 없음: 스킵(로그만)
         mention = f"<@&{self.dev_role_id}>" if self.dev_role_id else None   # developers 멘션(content)
         try:
-            self._post_debug(channel, embed, mention)
+            self._post_debug(channel, embed, mention, icon_file)
         except Exception as e:
             self._log(f"[debug 전송 실패] {e}")
 
-    def _post_debug(self, channel_id, embed, mention=None):
+    def _post_debug(self, channel_id, embed, mention=None, icon_file=None):
         # debug는 dst=null(dry)여도 전송(감시 목적). 토큰 있을 때만. 멘션은 content로(developers 핑).
         am = {"parse": [], "roles": [str(self.dev_role_id)]} if (mention and self.dev_role_id) else {"parse": []}
         payload = {"embeds": [embed], "allowed_mentions": am}
         if mention:
             payload["content"] = mention
-        r = requests.post(f"{API}/channels/{channel_id}/messages",
-                          headers=self._headers(), data=json.dumps(payload), timeout=30)
+        url = f"{API}/channels/{channel_id}/messages"
+        if icon_file:
+            # 로컬 아이콘을 multipart로 첨부(attachment://). Content-Type은 requests가 boundary와 함께 지정.
+            with open(icon_file, "rb") as f:
+                files = {"files[0]": (os.path.basename(icon_file), f.read(), "image/png")}
+            r = requests.post(url, headers={"Authorization": f"Bot {self.token}"},
+                              data={"payload_json": json.dumps(payload)}, files=files, timeout=30)
+        else:
+            r = requests.post(url, headers=self._headers(), data=json.dumps(payload), timeout=30)
         if r.status_code not in (200, 201):
             raise RuntimeError(f"디버그 전송 실패 {r.status_code} (ch={channel_id}): {r.text[:150]}")
         return r.json()
