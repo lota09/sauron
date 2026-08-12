@@ -40,7 +40,7 @@ async def summarize_one(c, notice_id: int):
             if du:
                 data_urls.append(du)
             else:
-                c.log(f"[이미지 제외] 로드/디코딩 실패 → LLM 입력 못 함: {img.get('url', '')[:80]}")
+                c.log(f"[이미지 제외] 로드 실패 또는 너무 작음(아이콘) → LLM 입력 안 함: {img.get('url', '')[:80]}")
         if len(images) > config.LLM_VISION_MAX_IMAGES:
             c.log(f"[이미지 상한] {len(images)}장 중 {config.LLM_VISION_MAX_IMAGES}장만 입력"
                   f"(LLM_VISION_MAX_IMAGES)")

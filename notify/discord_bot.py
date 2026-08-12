@@ -145,12 +145,14 @@ if _DISCORD:
     def _status_embed(st):
         title, color, _ = _STATE.get(st["state"], ("⚪ 상태 미상", 0x949BA4, "상태 미상"))
         e = discord.Embed(title=title, color=color)
-        if st["state"] == "stopped" and not st.get("pid"):
+        if st.get("since_beat") is None:      # heartbeat 기록 자체가 없음
             e.description = "실행 이력이 없습니다(한 번도 안 돌았거나 DB 초기화됨)."
             return e
-        e.add_field(name="가동 시간", value=_fmt_dur(st.get("uptime")), inline=True)
+        if st.get("alive"):
+            e.add_field(name="가동 시간", value=_fmt_dur(st.get("uptime")), inline=True)
         e.add_field(name="마지막 활동", value=f"{_fmt_dur(st.get('since_beat'))} 전", inline=True)
-        e.add_field(name="PID", value=f"{st.get('pid')} · {'생존' if st.get('alive') else '없음'}", inline=True)
+        if st.get("pid"):
+            e.add_field(name="PID", value=str(st["pid"]), inline=True)
         if st.get("last_new") is not None:
             e.add_field(name="직전 크롤 신규", value=f"{st['last_new']}건", inline=True)
         return e
@@ -371,7 +373,7 @@ if _DISCORD:
             n = {k: len(store.depts_by_kind(k, with_role=True)) for k in (STEP_GENERAL, STEP_MAJOR, STEP_ETC)}
             log.info("구독가능(역할보유) 학과: 공통 %d · 전공 %d · 기타 %d", n["general"], n["major"], n["etc"])
 
-        @tree.command(name="상태확인", description="공지 크롤러(sauron)의 현재 작동 상태", guild=guild_obj)
+        @tree.command(name="상태", description="공지 크롤러(sauron)의 현재 작동 상태", guild=guild_obj)
         async def status_cmd(interaction: discord.Interaction):
             st = await asyncio.to_thread(runstatus.read_status, store, config.RUN_STALE_SEC)
             await interaction.response.send_message(embed=_status_embed(st), ephemeral=True)

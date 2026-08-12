@@ -37,10 +37,10 @@ def _load_token():
 
 
 class Notifier:
-    def __init__(self, logger=None, dst="null", debug_channel_id=None, mono_channel_id=None):
+    def __init__(self, logger=None, dst="null", debug_channel_id=None, mono_channel_id=None,
+                 dev_role_id=None):
         """dst: 'null'(전송안함) | 'mono'(통합채널) | 'poly'(각 학과채널) | '<채널ID>'(명시 채널).
-        mono_channel_id·debug_channel_id: 통합/감시 채널. build_components가 DB(app_meta,
-        setup_guild가 생성·저장)에서 읽어 주입한다(secrets에서 채널ID를 읽지 않음)."""
+        mono/debug 채널ID·developers 역할ID: build_components가 DB(app_meta, setup_guild가 저장)에서 읽어 주입."""
         self.token = _load_token()
         self.logger = logger
         self.dst = str(dst or "null")
@@ -48,6 +48,7 @@ class Notifier:
         self.dry = not self.token                  # 실제 POST 불가(토큰 없음) → 시뮬레이션
         self.debug_channel_id = debug_channel_id or None
         self.mono_channel_id = mono_channel_id or None
+        self.dev_role_id = dev_role_id or None      # 디버그 메시지 멘션 대상(developers)
         self._fake = 0
         self._poly_warned = set()                  # poly 폴백 경고 학과별 1회만
 
@@ -57,17 +58,19 @@ class Notifier:
     def _headers(self):
         return {"Authorization": f"Bot {self.token}", "Content-Type": "application/json"}
 
-    def _post(self, channel_id, embed, allow_role=None):
+    def _post(self, channel_id, embed, content=None, allow_role=None):
         if self.dry:
             self._fake += 1
             self._log(f"[DRY send] ch={channel_id} :: {embed['title']}")
             return {"id": f"dry-{self._fake}"}
-        # 멘션 오발신 방지: 기본 전부 억제. poly면 해당 역할만 허용(역할 mentionable=False라도 핑 가능 —
-        #   봇에 '모든 역할 멘션' 권한 필요). 현재 멘션은 임베드 안이라, content로 옮기기 전까진 참고용.
+        # 멘션은 content에 실어야 알림이 간다(임베드 안 멘션은 핑 안 됨). 멘션 오발신 방지로 기본 전부 억제,
+        #   allow_role 지정 시 그 역할만 허용(역할 mentionable=False여도 핑 — 봇에 '모든 역할 멘션' 권한 필요).
         am = {"parse": [], "roles": [str(allow_role)]} if allow_role else {"parse": []}
+        payload = {"embeds": [embed], "allowed_mentions": am}
+        if content:
+            payload["content"] = content            # 임베드 '위'에 표시(디스코드는 content가 임베드보다 위)
         r = requests.post(f"{API}/channels/{channel_id}/messages",
-                          headers=self._headers(),
-                          data=json.dumps({"embeds": [embed], "allowed_mentions": am}), timeout=30)
+                          headers=self._headers(), data=json.dumps(payload), timeout=30)
         if r.status_code not in (200, 201):
             raise RuntimeError(f"디스코드 전송 실패 {r.status_code} (ch={channel_id}): {r.text[:200]}")
         return r.json()
@@ -82,8 +85,8 @@ class Notifier:
             raise RuntimeError(f"디스코드 수정 실패 {r.status_code}: {r.text[:200]}")
         return r.json()
 
-    # ── 임베드 구성 (기존 스타일: 제목 + 요약 + 링크필드 + 푸터) ─────
-    def _embed(self, notice, dept, mention):
+    # ── 임베드 구성 (제목 + 요약 + 링크필드 + 푸터). 멘션은 임베드가 아니라 content로 보낸다(핑 위해). ─────
+    def _embed(self, notice, dept):
         summary = (notice.get("summary") or "").strip()
         status = notice.get("status")
         if summary:
@@ -100,7 +103,7 @@ class Notifier:
             "color": NOTICE_COLOR,
             "fields": [{
                 "name": "🔗 링크",
-                "value": f"[▶자세히 보기]({notice['url']})\n​\n{mention}",
+                "value": f"[▶자세히 보기]({notice['url']})",
                 "inline": True,
             }],
             "footer": {"text": dept.get("name_ko", ""), "icon_url": dept.get("icon_url") or config.ICON_DEFAULT},
@@ -136,14 +139,14 @@ class Notifier:
             channel_id = self.mono_channel_id or "null"
             mention = ""
             allow_role = None                                    # 통합채널 폴백 시 역할 핑 안 함
-        res = self._post(channel_id, self._embed(notice, dept, mention), allow_role)
+        # 멘션은 content로(임베드 위). 요약 도착 후 edit(_patch)는 content를 건드리지 않아 멘션이 유지된다.
+        res = self._post(channel_id, self._embed(notice, dept), content=(mention or None), allow_role=allow_role)
         return channel_id, res["id"]
 
     def edit_summary(self, channel_id, message_id, notice, dept):
-        _, mention = self._resolve_channel(dept)
         if not channel_id:
             return
-        self._patch(channel_id, message_id, self._embed(notice, dept, mention))
+        self._patch(channel_id, message_id, self._embed(notice, dept))   # 임베드만 갱신, content(멘션) 보존
 
     def debug(self, content):
         embed = {
@@ -156,15 +159,20 @@ class Notifier:
         channel = self.debug_channel_id
         if not (channel and self.token):
             return          # 감시채널 미설정(setup_guild 미실행) 또는 토큰 없음: 스킵(로그만)
+        mention = f"<@&{self.dev_role_id}>" if self.dev_role_id else None   # developers 멘션(content)
         try:
-            self._post_debug(channel, embed)
+            self._post_debug(channel, embed, mention)
         except Exception as e:
             self._log(f"[debug 전송 실패] {e}")
 
-    def _post_debug(self, channel_id, embed):
-        # debug는 dst=null(dry)여도 전송(감시 목적). 토큰 있을 때만.
+    def _post_debug(self, channel_id, embed, mention=None):
+        # debug는 dst=null(dry)여도 전송(감시 목적). 토큰 있을 때만. 멘션은 content로(developers 핑).
+        am = {"parse": [], "roles": [str(self.dev_role_id)]} if (mention and self.dev_role_id) else {"parse": []}
+        payload = {"embeds": [embed], "allowed_mentions": am}
+        if mention:
+            payload["content"] = mention
         r = requests.post(f"{API}/channels/{channel_id}/messages",
-                          headers=self._headers(), data=json.dumps({"embeds": [embed]}), timeout=30)
+                          headers=self._headers(), data=json.dumps(payload), timeout=30)
         if r.status_code not in (200, 201):
             raise RuntimeError(f"디버그 전송 실패 {r.status_code} (ch={channel_id}): {r.text[:150]}")
         return r.json()

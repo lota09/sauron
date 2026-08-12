@@ -89,6 +89,10 @@ LLM_VISION = _get_bool("LLM_VISION", True)                    # 이미지 첨부
 #   조밀한 표까지 정밀 추출이 필요하면 다운스케일이 아니라 타일링/OCR로. Pillow 없으면 이 값 무시(원본 전송).
 LLM_VISION_MAX_PX = _get_int("LLM_VISION_MAX_PX", 1024)       # 전송 전 최대 변(px)
 LLM_VISION_MAX_IMAGES = _get_int("LLM_VISION_MAX_IMAGES", 4)  # 한 요청 최대 이미지 수(컨텍스트/지연 상한)
+# 아이콘·썸네일 등 초소형 이미지는 비전에 안 넣는다(LiteRT 텐서버퍼 크래시·무의미 입력 방지).
+#   Pillow 있으면 '최소 변(px)'로, 없으면 바이트 크기로 근사 컷. 실제 포스터는 보통 768px↑이라 200 컷은 안전.
+LLM_VISION_MIN_PX = _get_int("LLM_VISION_MIN_PX", 200)
+LLM_VISION_MIN_BYTES = _get_int("LLM_VISION_MIN_BYTES", 3000)
 # 이미지가 첨부될 때만 프롬프트에 덧붙는 지시(텍스트 전용 요약엔 안 붙어 '이미지' 오해 방지).
 LLM_VISION_HINT = _get("LLM_VISION_HINT",
                        "\n- 첨부된 포스터 이미지 안의 날짜·주요일정·대상·표 내용을 읽어 요약에 반영할 것.")
@@ -163,6 +167,10 @@ DISCORD_CHANNEL_PREFIX = _get("DISCORD_CHANNEL_PREFIX", "")  # 학과 채널명 
 #   넣지 않는다(넣어도 읽지 않음). 채널 '이름'만 바꾸고 싶으면 아래 두 값을 secrets에서 오버라이드.
 MONO_CHANNEL_NAME = _get("MONO_CHANNEL_NAME", "Sauron-Mono")
 DEBUG_CHANNEL_NAME = _get("DEBUG_CHANNEL_NAME", "Sauron-Debug")
+# mono·debug 채널이 들어가는 카테고리 + 열람 역할(둘 다 sauron 관리). 없으면 setup_guild가 생성.
+#   해당 채널은 developers만 열람(@everyone 숨김)·봇/관리자만 전송. 디버그 메시지는 이 역할을 멘션.
+DEV_CATEGORY_NAME = _get("DEV_CATEGORY_NAME", "developers")
+DEV_ROLE_NAME = _get("DEV_ROLE_NAME", "developers")
 
 # 디버그 모드 단일 식별자. 라우팅은 config가 아니라 '실행 플래그'로만 결정(안전).
 DEBUG_EN = True
