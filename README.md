@@ -24,7 +24,7 @@ python init/seed_db.py                      # 1) DB 스키마(v4) + 64개 학과
 python -m notify.setup_guild --dry          # 2) (poly 발송 쓸 때) 무엇을 만들지 미리보기
 python -m notify.setup_guild                #    학과별 역할·비공개 채널 + 감시채널 자동 생성 → ID를 DB에 저장
 python main.py once --dst null --nosummary  # 3) 시딩: 크롤 1회로 (제목·url)만 'seeded' 기록 (무발송·무요약)
-python main.py run  --dst poly              # 4) 운영: 상시 크롤 + 각 학과 채널 발송(+@everyone)
+python main.py run  --dst poly              # 4) 운영: 상시 크롤 + 각 학과 채널 발송(멘션 없음)
 python main.py once --dst mono              # 5) cron 근사: 크롤 1회 → 통합채널 몰빵(개발 확인, MONO_CHANNEL_ID 필요)
 python main.py redo 10 --dst mono           # 6) 임의 10개 학과 '최신 공지 1건' 강제 재요약 (크롤 X, 튜닝용)
 python main.py query "수강신청" --dst mono   # 7) 제목 검색 → 선택 → [재처리 | DB에서 제거]
