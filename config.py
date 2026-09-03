@@ -61,6 +61,9 @@ LLM_MODEL_FALLBACK = _get("LLM_MODEL_FALLBACK", "")    # 품질 미달 시 승�
 LLM_CONNECT_TIMEOUT = _get_int("LLM_CONNECT_TIMEOUT", 10)
 LLM_TIMEOUT = _get_int("LLM_TIMEOUT", 20)              # read timeout
 LLM_WALL_TIMEOUT = _get_int("LLM_WALL_TIMEOUT", 120)   # 한 요약 총 벽시계 상한(반복폭주 방지)
+# /상태 의 백엔드 생존 점검(probe_backend) 타임아웃. 디스코드 응답 예산(defer 후 15분이지만
+# 사용자 체감 상 수 초) 안에 끝나야 하므로 요약용 타임아웃과 따로 짧게 둔다.
+LLM_STATUS_TIMEOUT = _get_int("LLM_STATUS_TIMEOUT", 4)
 LLM_MAX_CONCURRENCY = _get_int("LLM_MAX_CONCURRENCY", 1)  # 폰=단일슬롯. 확장 시 상향
 LLM_MAX_INPUT_CHARS = _get_int("LLM_MAX_INPUT_CHARS", 6000)  # 초과 시 선축소/절단
 LLM_STREAM = _get_bool("LLM_STREAM", True)             # litertlm 서버는 스트리밍 사용(검증된 형태)
@@ -140,6 +143,10 @@ CRAWL_CONCURRENCY = _get_int("CRAWL_CONCURRENCY", 8)       # 목록 fetch 동시
 CRAWL_INTERVAL_SEC = _get_int("CRAWL_INTERVAL_SEC", 600)  # 10분
 # 크롤러 생존판정: heartbeat가 이 시간 넘게 갱신 안 되면 '멈춤(stale)'. 기본 = 크롤주기×2(한 사이클 놓쳐도 여유).
 RUN_STALE_SEC = _get_int("RUN_STALE_SEC", CRAWL_INTERVAL_SEC * 2)
+# 봇 presence(🟢/🟡/🔴) 갱신 주기. 겸 '워밍업' — 이 기기는 스왑 압박이 커서 봇이 오래 놀면
+# 프로세스가 통째로 페이지아웃되고, 그 상태에서 첫 슬래시 명령이 오면 페이지인에 3초를 넘겨
+# 인터랙션 토큰이 만료된다(10062 = 온라인인데 무응답). 주기적으로 코드 경로를 밟아 상주시킨다.
+BOT_PRESENCE_INTERVAL_SEC = _get_int("BOT_PRESENCE_INTERVAL_SEC", 120)
 USER_AGENT = _get("USER_AGENT",
                   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")

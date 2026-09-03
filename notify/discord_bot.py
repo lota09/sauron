@@ -9,6 +9,12 @@ notify/discord_bot.py — 구독 봇 (C안, 임베드+3단계). discord.py 2.x.
 - 전공은 Discord Select 25개 한계를 단과대 그룹핑으로 우회. '← 다른 단과대'로 여러 단과대 반복 선택.
 - 임베드 스타일: 갤러리 H(공통)·I(전공)·J(완료)·K(현황). 색상으로 단계 구분.
 
+`/상태` → 크롤러(생존·하트비트·직전 신규) + 요약 LLM 백엔드(모델·응답시간·가동) + 요약 대기 건수.
+
+⚠ 인터랙션 3초 규칙: 디스코드는 인터랙션 생성 후 3초 안에 첫 응답이 없으면 토큰을 폐기한다
+  (10062 Unknown interaction → 사용자에겐 '앱이 응답하지 않음'. 봇은 온라인이라 더 헷갈린다).
+  그래서 모든 핸들러는 DB·LLM·역할부여 전에 _ack()로 먼저 defer 하고 followup/edit_original_response 로 답한다.
+
 실행: python -m notify.discord_bot   (secrets/discord-api-info.json 의 bot_token 필요)
 권한: 봇에 Manage Roles + 대상 역할들보다 봇 역할이 상위.
 """
@@ -23,6 +29,7 @@ import config
 from core import runstatus
 from db.store import Store
 from notify.subscribe_logic import group_by_college, dept_select_options, diff_for_subset
+from summarize.llm import probe_backend
 
 try:
     import discord
@@ -57,7 +64,17 @@ def _load_token():
 def _setup_logging():
     # 콘솔 + logs/bot.log(일자별 회전). 크롤러(sauron.log)와 파일 분리(프로세스별 회전 충돌 방지).
     from core.log import setup_logger
-    setup_logger("sauron.bot", "bot.log")
+    lg = setup_logger("sauron.bot", "bot.log")
+    # discord.py 자체 로거도 같은 파일로. client.run(log_handler=None)이라 우리가 붙이지 않으면
+    # 게이트웨이 재연결·하트비트 지연 경고가 아무데도 안 남는다(sauron.sh가 stderr를 /dev/null로 보냄).
+    # '봇은 온라인인데 명령에 무응답'의 원인은 대부분 여기 찍힌다.
+    dlog = logging.getLogger("discord")
+    if not dlog.handlers:
+        for h in lg.handlers:
+            dlog.addHandler(h)
+        dlog.setLevel(logging.WARNING)
+        dlog.propagate = False
+    return lg
 
 
 if _DISCORD:
@@ -65,6 +82,31 @@ if _DISCORD:
     # ── 공통 유틸 ──────────────────────────────────────
     def _name(d):
         return d.get("name_ko") or d["dept_id"]
+
+    def _lag_ms(interaction):
+        """인터랙션이 디스코드에서 만들어진 뒤 우리 손에 들어오기까지 걸린 시간(ms).
+        토큰 유효기간은 '생성 후 3초'이므로, 이 값이 이미 3000에 가까우면 우리 코드가 아니라
+        게이트웨이 수신 지연이 원인이다(봇은 온라인인데 무응답 → 10062)."""
+        try:
+            return int((discord.utils.utcnow() - interaction.created_at).total_seconds() * 1000)
+        except Exception:
+            return -1
+
+    async def _ack(interaction, ephemeral=True, thinking=True):
+        """무엇을 하기 전에 먼저 '접수'(defer). 디스코드는 인터랙션 생성 후 3초 안에 첫 응답이
+        없으면 토큰을 버리고(10062 Unknown interaction) 사용자에겐 '앱이 응답하지 않음'만 남는다.
+        DB·LLM·역할부여는 3초를 넘길 수 있으므로 전부 defer 뒤에 한다.
+        반환 False = 이미 만료된 인터랙션(수신 지연) → 호출부는 조용히 포기."""
+        try:
+            await interaction.response.defer(ephemeral=ephemeral, thinking=thinking)
+            return True
+        except discord.NotFound:      # 10062 — 우리가 늦은 게 아니라 이벤트가 늦게 왔다
+            log.warning("만료된 인터랙션(defer 실패) type=%s lag=%dms",
+                        interaction.type, _lag_ms(interaction))
+            return False
+        except discord.HTTPException as e:
+            log.warning("defer 실패: %s", e)
+            return False
 
     def _current_summary(store, uid):
         """현재 구독을 kind별로 정리. 반환: {'general':[name], 'major':OrderedDict{col:[name]}, 'etc':[name]}"""
@@ -123,8 +165,9 @@ if _DISCORD:
             line += f"\n⚠️ 역할 권한 부족(봇 역할 위치 확인): {', '.join(failed)}"
         return line
 
-    # ── 상태확인(/상태확인) ────────────────────────────
-    #   크롤러(main.py run) 생존/하트비트를 core.runstatus 로 조회. presence는 main 크롤주기에 맞춰 갱신.
+    # ── 상태(/상태) ────────────────────────────────────
+    #   크롤러(main.py run) 생존/하트비트는 core.runstatus, 요약 LLM 백엔드는 summarize.llm.probe_backend
+    #   로 조회한다. presence(봇 상태메시지)는 BOT_PRESENCE_INTERVAL_SEC 주기로 갱신.
     _STATE = {
         "running": ("🟢 정상 작동 중", 0x23A55A, "공지 감시 중"),
         "stale":   ("🟡 응답 없음(멈춤·붕괴 의심)", 0xF0B232, "크롤러 멈춤 의심"),
@@ -142,20 +185,55 @@ if _DISCORD:
             return f"{m}분"
         return f"{sec}초"
 
-    def _status_embed(st):
+    # 백엔드 status 문자열이 이 중 하나면 '정상'. 그 외(loading/degraded 등)는 노랑으로 구분.
+    _LLM_OK_STATUS = ("ok", "ready", "healthy", "up", "running")
+
+    def _llm_value(llm):
+        """LLM 백엔드 필드 값(2줄): 모델 + (호스트·응답시간·가동시간) 또는 실패 사유."""
+        if not llm:
+            return "⚪ 조회 실패"
+        host = (llm.get("url") or "").split("//")[-1].split("/")[0] or "-"
+        if not llm.get("ok"):
+            return f"🔴 응답 없음 · {llm.get('error') or '원인 불명'}\n`{host}`"
+        status = (llm.get("status") or "ok").lower()
+        icon = "🟢" if status in _LLM_OK_STATUS else "🟡"
+        tail = [f"`{host}`"]
+        if llm.get("latency_ms") is not None:
+            tail.append(f"응답 {llm['latency_ms']}ms")
+        if llm.get("uptime"):
+            tail.append(f"가동 {_fmt_dur(llm['uptime'])}")
+        if icon == "🟡":
+            tail.append(f"status={llm.get('status')}")
+        return f"{icon} {llm.get('model') or '모델 미상'}\n" + " · ".join(tail)
+
+    def _status_embed(st, llm=None, pending=None):
         title, color, _ = _STATE.get(st["state"], ("⚪ 상태 미상", 0x949BA4, "상태 미상"))
         e = discord.Embed(title=title, color=color)
         if st.get("since_beat") is None:      # heartbeat 기록 자체가 없음
-            e.description = "실행 이력이 없습니다(한 번도 안 돌았거나 DB 초기화됨)."
-            return e
-        if st.get("alive"):
-            e.add_field(name="가동 시간", value=_fmt_dur(st.get("uptime")), inline=True)
-        e.add_field(name="마지막 활동", value=f"{_fmt_dur(st.get('since_beat'))} 전", inline=True)
-        if st.get("pid"):
-            e.add_field(name="PID", value=str(st["pid"]), inline=True)
-        if st.get("last_new") is not None:
-            e.add_field(name="직전 크롤 신규", value=f"{st['last_new']}건", inline=True)
+            e.description = "크롤러 실행 이력이 없습니다(한 번도 안 돌았거나 DB 초기화됨)."
+        else:
+            if st.get("alive"):
+                e.add_field(name="가동 시간", value=_fmt_dur(st.get("uptime")), inline=True)
+            e.add_field(name="마지막 활동", value=f"{_fmt_dur(st.get('since_beat'))} 전", inline=True)
+            if st.get("pid"):
+                e.add_field(name="PID", value=str(st["pid"]), inline=True)
+            if st.get("last_new") is not None:
+                e.add_field(name="직전 크롤 신규", value=f"{st['last_new']}건", inline=True)
+        e.add_field(name="요약 LLM", value=_llm_value(llm), inline=False)
+        if pending is not None:
+            e.add_field(name="요약 대기", value=f"{pending}건", inline=True)
         return e
+
+    def _collect_status(store):
+        """/상태 표시용 3종(크롤러·LLM·대기건수)을 한 번의 스레드 홉에서 수집. 예외는 부분 실패로 흡수."""
+        st = runstatus.read_status(store, config.RUN_STALE_SEC)
+        llm = probe_backend(timeout=config.LLM_STATUS_TIMEOUT)   # 예외 없음(상태 dict 반환)
+        try:
+            pending = len(store.pending_summary_ids())
+        except Exception as e:
+            log.warning("요약 대기 건수 조회 실패: %s", e)
+            pending = None
+        return st, llm, pending
 
     # ── Select 컴포넌트 ────────────────────────────────
     class DeptMultiSelect(discord.ui.Select):
@@ -170,6 +248,9 @@ if _DISCORD:
                              max_values=len(options), options=options)
 
         async def callback(self, interaction: discord.Interaction):
+            # 선택 학과가 많으면 add_roles/remove_roles 왕복이 3초를 쉽게 넘긴다 → 먼저 defer.
+            if not await _ack(interaction, thinking=False):
+                return
             uid = str(interaction.user.id)
             _, _, failed = await _apply_selection(interaction, self.store, self.dept_ids, self.values)
             note = _saved_note(self.store, uid, failed)
@@ -181,7 +262,7 @@ if _DISCORD:
                 embed, view = _render_etc(self.store, str(interaction.user.id), note)
             else:  # major dept
                 embed, view = _render_major_dept(self.store, str(interaction.user.id), self.college, note)
-            await interaction.response.edit_message(embed=embed, view=view)
+            await interaction.edit_original_response(embed=embed, view=view)
 
     class CollegeSelect(discord.ui.Select):
         def __init__(self, store, colleges):
@@ -190,10 +271,12 @@ if _DISCORD:
             super().__init__(placeholder="단과대를 고르세요", min_values=1, max_values=1, options=options)
 
         async def callback(self, interaction: discord.Interaction):
+            if not await _ack(interaction, thinking=False):
+                return
             college = self.values[0]
             log.info("전공 단과대선택 uid=%s college=%s", interaction.user.id, college)
             embed, view = _render_major_dept(self.store, str(interaction.user.id), college)
-            await interaction.response.edit_message(embed=embed, view=view)
+            await interaction.edit_original_response(embed=embed, view=view)
 
     # ── 단계 네비 버튼 ─────────────────────────────────
     class NavButton(discord.ui.Button):
@@ -202,6 +285,8 @@ if _DISCORD:
             self.target, self.store, self.college = target, store, college
 
         async def callback(self, interaction: discord.Interaction):
+            if not await _ack(interaction, thinking=False):
+                return
             uid = str(interaction.user.id)
             log.info("네비 uid=%s → %s", interaction.user.id, self.target)
             if self.target == "general":
@@ -212,7 +297,7 @@ if _DISCORD:
                 embed, view = _render_etc(self.store, uid)
             else:  # done
                 embed, view = _render_done(self.store, uid)
-            await interaction.response.edit_message(embed=embed, view=view)
+            await interaction.edit_original_response(embed=embed, view=view)
 
     # ── 단계별 (embed, view) 렌더 ──────────────────────
     def _render_general(store, uid, note=None):
@@ -299,15 +384,18 @@ if _DISCORD:
 
     # ── 진입(공개 버튼 A) ──────────────────────────────
     async def _open_flow(interaction, store):
-        """/구독 및 공개 버튼의 공통 진입: 구독 가능 항목 확인 후 ①공통 단계를 ephemeral로 연다."""
-        log.info("구독 진입 uid=%s(%s)", interaction.user.id, interaction.user)
+        """/구독 및 공개 버튼의 공통 진입: 구독 가능 항목 확인 후 ①공통 단계를 ephemeral로 연다.
+        thinking=True 로 defer → followup 은 '새 ephemeral 메시지'라 공개 버튼 메시지는 그대로 남는다."""
+        if not await _ack(interaction):
+            return
+        log.info("구독 진입 uid=%s(%s) lag=%dms", interaction.user.id, interaction.user, _lag_ms(interaction))
         any_role = any(store.depts_by_kind(k, with_role=True) for k in (STEP_GENERAL, STEP_MAJOR, STEP_ETC))
         if not any_role:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "아직 구독 가능한 항목(역할)이 없어요. 관리자가 `setup_guild` 를 먼저 실행해야 합니다.", ephemeral=True)
             return
         embed, view = _render_general(store, str(interaction.user.id))
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     def _entry_embed():
         """공개 채널에 상주하는 안내 임베드 A(간결·마크다운). 사용자는 버튼만 누르면 됨."""
@@ -346,7 +434,9 @@ if _DISCORD:
         _persist = {"added": False, "presence": False}   # 영구 View·presence 루프 중복시작 방지
 
         async def _presence_loop():
-            # main 크롤주기에 맞춰(하드코딩 X) 크롤러 상태를 봇 presence로 표시. 최대 1주기 늦을 수 있음(→ /상태확인로 실시간).
+            # 크롤러 상태를 봇 presence로 표시(최대 1주기 늦음 → 실시간은 /상태).
+            # 겸 워밍업: 주기적으로 DB·pgrep 경로를 밟아 프로세스가 스왑으로 밀려나지 않게 한다
+            # (밀려나면 첫 슬래시 명령이 3초 안에 응답 못 해 10062로 무응답이 된다).
             while True:
                 try:
                     st = await asyncio.to_thread(runstatus.read_status, store, config.RUN_STALE_SEC)
@@ -355,7 +445,7 @@ if _DISCORD:
                     await client.change_presence(activity=discord.CustomActivity(name=f"{emoji} {label}"))
                 except Exception as e:
                     log.warning("presence 갱신 실패: %s", e)
-                await asyncio.sleep(config.CRAWL_INTERVAL_SEC)
+                await asyncio.sleep(config.BOT_PRESENCE_INTERVAL_SEC)
 
         @client.event
         async def on_ready():
@@ -373,10 +463,16 @@ if _DISCORD:
             n = {k: len(store.depts_by_kind(k, with_role=True)) for k in (STEP_GENERAL, STEP_MAJOR, STEP_ETC)}
             log.info("구독가능(역할보유) 학과: 공통 %d · 전공 %d · 기타 %d", n["general"], n["major"], n["etc"])
 
-        @tree.command(name="상태", description="공지 크롤러(sauron)의 현재 작동 상태", guild=guild_obj)
+        @tree.command(name="상태", description="크롤러·요약 LLM의 현재 작동 상태", guild=guild_obj)
         async def status_cmd(interaction: discord.Interaction):
-            st = await asyncio.to_thread(runstatus.read_status, store, config.RUN_STALE_SEC)
-            await interaction.response.send_message(embed=_status_embed(st), ephemeral=True)
+            # DB + pgrep + LLM HTTP 점검이라 3초를 넘길 수 있다 → 먼저 defer, 뒤에 followup.
+            if not await _ack(interaction):
+                return
+            log.info("/상태 uid=%s lag=%dms", interaction.user.id, _lag_ms(interaction))
+            st, llm, pending = await asyncio.to_thread(_collect_status, store)
+            log.info("/상태 결과 크롤러=%s llm=%s(%s)", st["state"],
+                     "ok" if llm.get("ok") else f"fail:{llm.get('error')}", llm.get("model"))
+            await interaction.followup.send(embed=_status_embed(st, llm, pending), ephemeral=True)
 
         @tree.command(name="구독", description="학과·공통 공지 구독을 설정합니다", guild=guild_obj)
         async def subscribe(interaction: discord.Interaction):
@@ -386,12 +482,21 @@ if _DISCORD:
                       guild=guild_obj)
         @app_commands.default_permissions(manage_guild=True)   # 관리자/서버관리 권한자만 노출
         async def make_entry(interaction: discord.Interaction):
+            if not await _ack(interaction):
+                return
             log.info("/구독버튼생성 by uid=%s ch=%s", interaction.user.id, interaction.channel_id)
             await interaction.channel.send(embed=_entry_embed(), view=SubscribeEntryView(store))
-            await interaction.response.send_message("이 채널에 구독 버튼을 올렸어요.", ephemeral=True)
+            await interaction.followup.send("이 채널에 구독 버튼을 올렸어요.", ephemeral=True)
 
         @tree.error
         async def on_app_error(interaction: discord.Interaction, error):
+            orig = getattr(error, "original", error)
+            # 10062 = 토큰 만료(3초 초과 또는 이벤트 수신 지연). 안내를 보낼 대상이 이미 없으므로
+            # 트레이스백 대신 한 줄만 남긴다(lag 로 우리 지연인지 게이트웨이 지연인지 판별).
+            if isinstance(orig, discord.NotFound) and getattr(orig, "code", None) == 10062:
+                log.warning("만료된 인터랙션(10062) cmd=%s lag=%dms",
+                            getattr(interaction.command, "name", "?"), _lag_ms(interaction))
+                return
             log.exception("슬래시 명령 오류: %s", error)
             try:
                 if interaction.response.is_done():
