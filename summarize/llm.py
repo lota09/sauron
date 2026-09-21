@@ -103,6 +103,43 @@ def _interruptible_sleep(seconds):
 DEFAULT_MODEL = "Gemma-4-E2B-it"  # 자동감지 실패 시 최후 폴백
 
 
+def probe_backend(base_url=None, timeout=5):
+    """LLM 백엔드 생존 점검(상태표시 전용 — 예외를 던지지 않는다).
+    /health(model·status·uptime_seconds) → /v1/models(OpenAI 표준) 순으로 시도.
+    반환: {ok, model, status, uptime, latency_ms, error, url}."""
+    base = (base_url or config.LLM_BASE_URL).rstrip("/")
+    out = {"ok": False, "model": None, "status": None, "uptime": None,
+           "latency_ms": None, "error": None, "url": base}
+    t0 = time.time()
+    try:
+        r = requests.get(f"{base}/health", timeout=timeout)
+        out["latency_ms"] = int((time.time() - t0) * 1000)
+        if r.status_code == 200:
+            try:
+                d = r.json()
+            except ValueError:
+                d = {}
+            out.update(ok=True, model=d.get("model"), status=d.get("status") or "ok",
+                       uptime=d.get("uptime_seconds"))
+            return out
+        out["error"] = f"HTTP {r.status_code}"
+    except Exception as e:
+        out["error"] = type(e).__name__
+    t0 = time.time()                       # /health 없는 백엔드(vLLM 등) → 표준 목록으로 재확인
+    try:
+        r = requests.get(f"{base}/models", timeout=timeout)
+        out["latency_ms"] = int((time.time() - t0) * 1000)
+        if r.status_code == 200:
+            data = r.json().get("data") or []
+            out.update(ok=True, error=None, status="ok",
+                       model=(data[0].get("id") if data else None))
+        else:
+            out["error"] = f"HTTP {r.status_code}"
+    except Exception as e:
+        out["error"] = out["error"] or type(e).__name__
+    return out
+
+
 def fetch_loaded_model(base_url, timeout=10):
     """서버에 로드된 모델명을 조회. /health(model+status, 가장 단순) → /v1/models(표준) 순. 실패 시 None."""
     base = (base_url or "").rstrip("/")
