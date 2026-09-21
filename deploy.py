@@ -16,7 +16,8 @@ setup_guild 진행 '아니오')은 실패가 아니라 건너뛰기로 계속 �
        기본값 = 기존 파일 값(있으면), LLM_BASE_URL 없으면 http://localhost:8000/v1
   4) DB 초기화: init/seed_db.py (schema + depts_seed.csv의 학과 upsert)
        ★ setup_guild가 depts 테이블을 읽어 학과 채널을 만들므로 반드시 이 단계가 먼저.
-  5) setup_guild --dry → 만들 게 있으면 확인 후 실제 생성(통합·감시·학과 채널/역할)
+  5) setup_guild --dry → 만들 게 있거나 app_meta가 비었으면(--check) 실제 실행
+       ★ '길드에 다 있음'과 'DB에 기록됨'은 다른 문제다. 후자가 비면 런타임이 감시채널을 못 찾는다.
   6) 시딩: main.py once --dst null --nosummary (현재 공지를 '본 것'으로 기록, 무발송)
   7) 서비스 등록(선택): systemd / supervisor / 안 함(기본).
        설정파일은 이 스크립트의 절대경로·현재 계정으로 채워 넣고, 이미 있으면 덮어쓴다.
@@ -149,17 +150,30 @@ def step_setup_guild(py, can_run):
             capture_output=True, text=True)
     out = (r.stdout or "") + (r.stderr or "")
     print(out.rstrip())
-    if r.returncode != 0 or "[오류]" in out or "길드 ID 없음" in out:
+    if r.returncode != 0 or "길드 ID 없음" in out:
         die("setup_guild --dry 실패(토큰/서버ID/봇 초대/네트워크 확인).")
-    # 생성 예정 항목이 있는가: dry에서 '...생성] ... (dry)' 라인 존재 여부
-    need = any(("(dry)" in ln and "생성]" in ln) for ln in out.splitlines())
-    if not need:
-        print("    → 이미 모두 세팅됨(생성할 채널/역할 없음).")
+
+    # 실제 실행이 필요한가는 두 가지를 함께 본다.
+    #   (1) 길드에 만들 게 있는가            — dry 출력의 '...생성] ... (dry)' 라인
+    #   (2) DB(app_meta)가 동기화돼 있는가   — --check (디스코드 접속 없이 DB만 확인)
+    # (1)만 보면, 길드엔 채널이 다 있는데 app_meta만 비어 있는 상태에서 '이미 세팅됨'으로 건너뛴다.
+    # 그러면 런타임이 감시채널ID를 못 읽어 디버그·요약실패 알림이 통째로 안 나간다(실제로 겪음).
+    need_create = any(("(dry)" in ln and "생성]" in ln) for ln in out.splitlines())
+    synced = run([py, "-m", "notify.setup_guild", "--check"], cwd=ROOT,
+                 capture_output=True, text=True).returncode == 0
+    if not need_create and synced:
+        print("    → 이미 모두 세팅됨(생성할 채널/역할 없음 · app_meta 동기화 확인).")
         return
-    if yn("    위 항목을 이대로 생성하며 진행하시겠습니까?", False):
+    if not need_create:
+        print("    ⚠ 길드엔 만들 게 없지만 app_meta에 채널ID가 없습니다 "
+              "→ 생성 없이 '동기화만' 수행합니다(권한·카테고리 소급 + 채널ID 기록).")
+        ok = True
+    else:
+        ok = yn("    위 항목을 이대로 생성하며 진행하시겠습니까?", False)
+    if ok:
         r2 = run([py, "-m", "notify.setup_guild"], cwd=ROOT)
         if r2.returncode != 0:
-            die("setup_guild 실제 생성 실패.")
+            die("setup_guild 실패(생성 또는 app_meta 기록). 위 출력의 [실패]/트레이스백 확인.")
     else:
         print("    → 사용자 선택으로 건너뜀(실패 아님). 나중에: python -m notify.setup_guild")
 
