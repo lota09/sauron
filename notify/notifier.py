@@ -59,6 +59,7 @@ class Notifier:
         self.mono_channel_id = mono_channel_id or None
         self._fake = 0
         self._poly_warned = set()                  # poly 폴백 경고 학과별 1회만
+        self._debug_warned = False                 # 감시채널 미설정 경고 1회만(내용은 매번 로그)
 
     def _log(self, msg):
         (self.logger.info if self.logger else print)(msg)
@@ -143,9 +144,28 @@ class Notifier:
         return channel_id, res["id"]
 
     def edit_summary(self, channel_id, message_id, notice, dept):
-        if not channel_id:
-            return
-        self._patch(channel_id, message_id, self._embed(notice, dept))   # 임베드만 갱신
+        """요약 결과를 원 메시지에 반영. 실패 상태면 감시채널 디버그도 여기서 함께 보낸다.
+
+        발송 지점을 호출부(worker)가 아니라 '실패 문구를 그리는 곳'에 두는 이유:
+        SUMMARY_FAIL_NOTE가 뜨는데 디버그는 안 오는 경로(redo·재적재·edit 실패 등)를 원천 차단.
+        패치가 실패해도 디버그는 나간다(오히려 그때가 더 중요) — finally."""
+        try:
+            if channel_id:
+                self._patch(channel_id, message_id, self._embed(notice, dept))   # 임베드만 갱신
+        finally:
+            if notice.get("status") == "summary_failed":
+                self.debug_summary_failed(notice, dept)
+
+    def debug_summary_failed(self, notice, dept=None):
+        """'요약을 실패하였습니다'가 사용자에게 보이는 순간의 디버그 알림(사유·링크 포함)."""
+        dept = dept or {}
+        reason = (notice.get("fail_reason") or "사유 미기록").strip()
+        where = dept.get("name_ko") or notice.get("dept_id") or "-"
+        url = notice.get("url")
+        self.debug(f"**요약 실패** · {where}\n"
+                   f"{(notice.get('title') or '')[:80]}\n"
+                   f"사유: `{reason[:300]}`"
+                   + (f"\n[▶공지 보기]({url})" if url else ""))
 
     def debug(self, content):
         icon_url, icon_file = _footer_icon()   # 로컬 아이콘 있으면 attachment://, 없으면 URL 폴백
@@ -158,7 +178,15 @@ class Notifier:
         }
         channel = self.debug_channel_id
         if not (channel and self.token):
-            return          # 감시채널 미설정(setup_guild 미실행) 또는 토큰 없음: 스킵(로그만)
+            # 조용히 버리면 '디버그가 안 오니까 문제도 없다'로 읽힌다(실제로 그렇게 192건이 묻혔다).
+            # 못 보내는 이유를 1회 경고하고, 내용 자체는 매번 로그에 남긴다.
+            if not self._debug_warned:
+                self._debug_warned = True
+                why = "감시채널ID 없음(app_meta.debug_channel_id)" if not channel else "봇 토큰 없음"
+                self._log(f"[디버그 발송 불가] {why} → 디버그는 로그에만 남습니다. "
+                          f"`python -m notify.setup_guild` 실행으로 감시채널을 등록하세요")
+            self._log(f"[디버그(미발송)] {content}")
+            return
         try:
             self._post_debug(channel, embed, icon_file)
         except Exception as e:

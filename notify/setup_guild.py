@@ -25,6 +25,7 @@ import json
 import os
 import re
 import sys
+import traceback
 
 import config
 from db.store import Store
@@ -34,7 +35,7 @@ try:
 except ImportError:
     discord = None
 
-DRY = "--dry" in sys.argv[1:]
+DRY = "--dry" in sys.argv[1:] and "--check" not in sys.argv[1:]
 
 
 def _norm_ch(name):
@@ -113,10 +114,15 @@ async def _sync_perms(ch, managed, cat=_KEEP):
     return False
 
 
+# setup_guild가 app_meta에 남겨야 하는 키 — 끝에서 '진짜 저장됐는지' 되읽어 확인한다.
+META_KEYS = ("developers_role_id", "mono_channel_id", "debug_channel_id")
+
+
 async def run(gid):
     store = Store(config.DB_PATH)
     intents = discord.Intents.default()
     client = discord.Client(intents=intents)
+    result = {"ok": False}          # on_ready 안의 성패를 바깥(main)으로 전달
 
     @client.event
     async def on_ready():
@@ -244,15 +250,42 @@ async def run(gid):
                   + f" / 채널 생성 {created_c}·기존 {synced_c}"
                   + f" / 통합채널 {'준비됨' if mono else '-'} / 감시채널 {'준비됨' if dbg else '-'}"
                   + (" (dry-run: 실제 생성 없음)" if DRY else ""))
-        except Exception as e:
-            print(f"[오류] {e}")
+            # 위 '준비됨'은 디스코드 객체를 잡았다는 뜻일 뿐 DB에 들어갔다는 뜻이 아니다.
+            # 런타임이 실제로 읽는 값을 되읽어 그대로 보여주고, 빠진 게 있으면 실패로 끝낸다.
+            #   (과거에 mono/debug 키가 비어 디버그가 통째로 안 나가는데도 아무도 몰랐다.)
+            result["ok"] = _verify_meta(store)
+        except Exception:
+            traceback.print_exc()          # 사유만이 아니라 어디서 끊겼는지까지 남긴다
+            result["ok"] = False
         finally:
             await client.close()
 
     await client.start(_token())
+    return result["ok"]
+
+
+def _verify_meta(store):
+    """app_meta를 되읽어 저장 결과를 출력. 전부 있으면 True."""
+    if DRY:
+        print("[검증 생략] dry-run — DB에 쓰지 않았습니다")
+        return True
+    vals = {k: store.get_meta(k) for k in META_KEYS}
+    for k, v in vals.items():
+        print(f"[app_meta] {k} = {v or '없음 ← 저장 안 됨'}")
+    missing = [k for k, v in vals.items() if not v]
+    if missing:
+        print(f"[실패] app_meta에 저장되지 않은 키: {', '.join(missing)}")
+        return False
+    print("[검증 OK] 런타임(main)이 읽을 값이 모두 저장됨 "
+          "— 크롤러가 이미 떠 있다면 재시작해야 반영됩니다(시작 시 1회만 읽음)")
+    return True
 
 
 def main():
+    # --check: 디스코드에 붙지 않고 'DB가 동기화돼 있나'만 본다. 길드에 채널이 다 있어도
+    #   app_meta가 비어 있을 수 있으므로(그러면 런타임이 감시채널을 못 찾는다) 따로 확인이 필요하다.
+    if "--check" in sys.argv[1:]:
+        raise SystemExit(0 if _verify_meta(Store(config.DB_PATH)) else 1)
     if discord is None:
         raise SystemExit("discord.py 미설치: pip install -U discord.py")
     debug = config.debug_from_argv(sys.argv)
@@ -260,7 +293,8 @@ def main():
     if not gid:
         raise SystemExit("대상 길드 ID 없음: DEBUG_GUILD_ID/PROD_GUILD_ID 확인 (또는 --debug/--prod)")
     print(f"[setup] {'디버깅' if debug else '실서비스'} 서버({gid})" + (" [dry]" if DRY else ""))
-    asyncio.run(run(gid))
+    if not asyncio.run(run(gid)):
+        raise SystemExit(1)      # 반쯤 끝난 실행이 성공(exit 0)으로 보이지 않게 한다
 
 
 if __name__ == "__main__":

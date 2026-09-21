@@ -178,35 +178,18 @@ if _DISCORD:
         if sec is None:
             return "-"
         sec = int(sec)
-        h, m = sec // 3600, (sec % 3600) // 60
+        d, h, m = sec // 86400, (sec % 86400) // 3600, (sec % 3600) // 60
+        if d:                       # 크롤러·LLM 모두 며칠씩 떠 있어 '187시간'보다 '7일 19시간'이 읽힌다
+            return f"{d}일 {h}시간"
         if h:
             return f"{h}시간 {m}분"
         if m:
             return f"{m}분"
         return f"{sec}초"
 
-    # 백엔드 status 문자열이 이 중 하나면 '정상'. 그 외(loading/degraded 등)는 노랑으로 구분.
-    _LLM_OK_STATUS = ("ok", "ready", "healthy", "up", "running")
-
-    def _llm_value(llm):
-        """LLM 백엔드 필드 값(2줄): 모델 + (호스트·응답시간·가동시간) 또는 실패 사유."""
-        if not llm:
-            return "⚪ 조회 실패"
-        host = (llm.get("url") or "").split("//")[-1].split("/")[0] or "-"
-        if not llm.get("ok"):
-            return f"🔴 응답 없음 · {llm.get('error') or '원인 불명'}\n`{host}`"
-        status = (llm.get("status") or "ok").lower()
-        icon = "🟢" if status in _LLM_OK_STATUS else "🟡"
-        tail = [f"`{host}`"]
-        if llm.get("latency_ms") is not None:
-            tail.append(f"응답 {llm['latency_ms']}ms")
-        if llm.get("uptime"):
-            tail.append(f"가동 {_fmt_dur(llm['uptime'])}")
-        if icon == "🟡":
-            tail.append(f"status={llm.get('status')}")
-        return f"{icon} {llm.get('model') or '모델 미상'}\n" + " · ".join(tail)
-
-    def _status_embed(st, llm=None, pending=None):
+    def _status_embed(st, llm=None, pending=None, stats=None):
+        """제목·색은 크롤러 상태(_STATE)만으로 정한다. 나머지는 전부 '키: 값' 나열 —
+        판정 문구('요약 대부분 실패' 등)는 넣지 않는다. 해석은 보는 사람 몫."""
         title, color, _ = _STATE.get(st["state"], ("⚪ 상태 미상", 0x949BA4, "상태 미상"))
         e = discord.Embed(title=title, color=color)
         if st.get("since_beat") is None:      # heartbeat 기록 자체가 없음
@@ -219,13 +202,33 @@ if _DISCORD:
                 e.add_field(name="PID", value=str(st["pid"]), inline=True)
             if st.get("last_new") is not None:
                 e.add_field(name="직전 크롤 신규", value=f"{st['last_new']}건", inline=True)
-        e.add_field(name="요약 LLM", value=_llm_value(llm), inline=False)
         if pending is not None:
             e.add_field(name="요약 대기", value=f"{pending}건", inline=True)
+
+        if llm:
+            host = (llm.get("url") or "").split("//")[-1].split("/")[0] or "-"
+            if llm.get("ok"):
+                e.add_field(name="LLM 모델", value=llm.get("model") or "-", inline=True)
+                srv = [f"`{host}`", f"status={llm.get('status') or '-'}"]
+                if llm.get("latency_ms") is not None:
+                    srv.append(f"/health {llm['latency_ms']}ms")
+                if llm.get("uptime"):
+                    srv.append(f"가동 {_fmt_dur(llm['uptime'])}")
+            else:
+                srv = [f"`{host}`", f"연결 실패: {llm.get('error') or '-'}"]
+            e.add_field(name="LLM 서버", value=" · ".join(srv), inline=False)
+
+        if stats:
+            e.add_field(name=f"요약 (최근 {stats['hours']}시간)",
+                        value=f"성공 {stats['done']} / 실패 {stats['failed']}", inline=True)
+            if stats.get("last_fail_reason"):
+                e.add_field(name="최근 실패 사유",
+                            value=f"`{stats['last_fail_reason'][:200]}`", inline=False)
         return e
 
     def _collect_status(store):
-        """/상태 표시용 3종(크롤러·LLM·대기건수)을 한 번의 스레드 홉에서 수집. 예외는 부분 실패로 흡수."""
+        """/상태 표시용(크롤러·LLM·대기건수·요약성적)을 한 번의 스레드 홉에서 수집.
+        요약 성적은 24시간 기준, 그 사이 처리가 없었으면 7일로 넓혀 본다(조용한 날에도 판정 가능)."""
         st = runstatus.read_status(store, config.RUN_STALE_SEC)
         llm = probe_backend(timeout=config.LLM_STATUS_TIMEOUT)   # 예외 없음(상태 dict 반환)
         try:
@@ -233,7 +236,14 @@ if _DISCORD:
         except Exception as e:
             log.warning("요약 대기 건수 조회 실패: %s", e)
             pending = None
-        return st, llm, pending
+        try:
+            stats = store.summary_stats(24)
+            if not stats["total"]:
+                stats = store.summary_stats(24 * 7)
+        except Exception as e:
+            log.warning("요약 성적 조회 실패: %s", e)
+            stats = None
+        return st, llm, pending, stats
 
     # ── Select 컴포넌트 ────────────────────────────────
     class DeptMultiSelect(discord.ui.Select):
@@ -469,10 +479,11 @@ if _DISCORD:
             if not await _ack(interaction):
                 return
             log.info("/상태 uid=%s lag=%dms", interaction.user.id, _lag_ms(interaction))
-            st, llm, pending = await asyncio.to_thread(_collect_status, store)
-            log.info("/상태 결과 크롤러=%s llm=%s(%s)", st["state"],
-                     "ok" if llm.get("ok") else f"fail:{llm.get('error')}", llm.get("model"))
-            await interaction.followup.send(embed=_status_embed(st, llm, pending), ephemeral=True)
+            st, llm, pending, stats = await asyncio.to_thread(_collect_status, store)
+            log.info("/상태 결과 크롤러=%s llm=%s(%s) 요약 성공/실패=%s", st["state"],
+                     "ok" if llm.get("ok") else f"fail:{llm.get('error')}", llm.get("model"),
+                     f"{stats['done']}/{stats['failed']}" if stats else "-")
+            await interaction.followup.send(embed=_status_embed(st, llm, pending, stats), ephemeral=True)
 
         @tree.command(name="구독", description="학과·공통 공지 구독을 설정합니다", guild=guild_obj)
         async def subscribe(interaction: discord.Interaction):

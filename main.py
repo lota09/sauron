@@ -52,9 +52,13 @@ def build_components(logger=None, dst="null", nosummary=False):
     dbg_ch = store.get_meta("debug_channel_id")
     mono_ch = store.get_meta("mono_channel_id")
     notifier = Notifier(logger, dst=dst, debug_channel_id=dbg_ch, mono_channel_id=mono_ch)
+    # 채널ID는 값 자체를 남긴다 — '설정/없음'만 남기면 나중에 "어디로 보냈나"를 로그로 못 따라간다.
     logger.info(f"[전송] dst={notifier.dst} dry={notifier.dry} nosummary={nosummary} "
-                f"통합채널={'설정' if mono_ch else '없음'} 감시채널={'설정' if dbg_ch else '없음'}"
-                f"{'' if (mono_ch or dbg_ch) else ' (setup_guild 필요)'}")
+                f"통합채널={mono_ch or '없음'} 감시채널={dbg_ch or '없음'}")
+    if not dbg_ch:
+        # 감시채널이 없으면 모든 디버그(요약 실패 포함)가 디스코드로 안 나간다 — 시작 시 한 번 못박는다.
+        logger.info("[경고] 감시채널ID 없음(app_meta.debug_channel_id) → 디버그·요약실패 알림이 "
+                    "디스코드로 나가지 않고 로그에만 남습니다. `python -m notify.setup_guild` 필요")
     return Components(
         store=store,
         fetcher=Fetcher(),
