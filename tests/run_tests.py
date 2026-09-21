@@ -25,6 +25,10 @@ from crawl.fetcher import Fetcher
 from crawl.diff import detect_new, FetchEmpty, TooManyNew
 from summarize.llm import OpenAICompatSummarizer, SummaryError
 from notify.notifier import Notifier
+import notify.notifier as _notifier_mod
+# 테스트는 절대 실제 디스코드로 나가면 안 된다. 원래는 "토큰 파일이 없으면 dry"에 기대고 있었는데,
+# 봇이 도는 기기엔 토큰이 있어서 채널 "null"로 진짜 요청을 보내고 실패했다(done에 message_id 테스트).
+_notifier_mod._load_token = lambda: None
 from core.queue import WorkQueue
 from pipeline import Components, crawl_pass, run_once
 
@@ -540,6 +544,118 @@ def test_ssupath_login():
     check("거부 후 재시도 안 함(계정 잠금 방지)", bad.posts == 1, f"POST {bad.posts}회")
 
 
+def test_category_rename():
+    print("[test] 카테고리 — kind별 이름(설정) · 기존 카테고리 이름 바꾸기(과반 기준·멱등)")
+    import asyncio as _a
+    import notify.setup_guild as sg
+
+    class Cat:
+        def __init__(self, i, name): self.id, self.name, self.edits = i, name, 0
+        async def edit(self, name, reason=None):
+            self.name = name; self.edits += 1; return self
+
+    class Ch:
+        def __init__(self, name, cid): self.name, self.category_id = name, cid
+
+    orig = sg.discord.CategoryChannel
+    sg.discord.CategoryChannel = Cat
+    try:
+        old_general, etc = Cat(1, "공통 공지"), Cat(2, "기타")
+        chans = [old_general, etc, Ch("학사공지", 1), Ch("장학공지", 1), Ch("창업", 2), Ch("슈패스-비교과", 1)]
+        depts = [{"dept_id": "a", "name_ko": "학사공지", "kind": "general"},
+                 {"dept_id": "b", "name_ko": "장학공지", "kind": "general"},
+                 {"dept_id": "c", "name_ko": "창업", "kind": "etc"},
+                 {"dept_id": "d", "name_ko": "슈패스 비교과", "kind": "etc"}]   # etc인데 아직 옛 카테고리에 있음
+        find = lambda n: next((c for c in chans if isinstance(c, Ch) and c.name == sg._norm_ch(n)), None)
+        check("kind → 카테고리 이름(설정)", [sg._category_name(d) for d in depts] ==
+              [config.GENERAL_CATEGORY_NAME] * 2 + [config.ETC_CATEGORY_NAME] * 2, "")
+        sg.DRY = False
+        cache = {}
+        _a.run(sg._rename_categories(depts, chans, find, cache))
+        check("general 과반 카테고리의 이름만 바꿈(새로 만들지 않음)",
+              old_general.name == config.GENERAL_CATEGORY_NAME and old_general.edits == 1 and etc.name == "기타", old_general.name)
+        check("바로 뒤 생성 단계가 재사용하도록 캐시", cache.get(config.GENERAL_CATEGORY_NAME) is old_general, str(cache))
+        _a.run(sg._rename_categories(depts, chans, find, {}))
+        check("두 번째 실행은 아무것도 안 함(멱등)", old_general.edits == 1, str(old_general.edits))
+    finally:
+        sg.discord.CategoryChannel = orig
+        sg.DRY = "--dry" in sys.argv[1:]
+
+
+def test_llm_timeout_vs_disconnect():
+    print("[test] LLM — 읽기 시간초과(첫 토큰 대기)와 연결 끊김을 구분")
+    import socket
+    from summarize.llm import OpenAICompatSummarizer, ConnectionErrorLLM
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+            self.wfile.flush()
+            if self.server.mode == "slow":
+                import time as _t; _t.sleep(3)                       # 첫 토큰 전 침묵 > read timeout
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"x"}}]}\n\n')
+            else:
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"abc"}}]}\n\n'); self.wfile.flush()
+                self.connection.shutdown(socket.SHUT_RDWR)             # 생성 도중 끊음
+        def log_message(self, *a): pass
+
+    for mode, want in (("slow", "시간초과: 첫 토큰"), ("drop", "")):
+        srv = HTTPServer(("127.0.0.1", 0), H); srv.mode = mode
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        s = OpenAICompatSummarizer(base_url=f"http://127.0.0.1:{srv.server_port}/v1", model="m", timeout=1)
+        try:
+            s._call_stream(f"http://127.0.0.1:{srv.server_port}/v1/chat/completions", {"stream": True}); msg = "(예외 없음)"
+        except ConnectionErrorLLM as e:
+            msg = str(e)
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+        srv.shutdown()
+        if mode == "slow":
+            check("첫 토큰 대기 초과 → '시간초과'", want in msg, msg)
+        else:
+            check("생성 도중 끊김 → 시간초과로 오분류하지 않음", "시간초과" not in msg, msg)
+
+
+def test_image_and_stream_errors():
+    print("[test] 이미지 아님 제외 · 플러그인 세션으로 이미지 받기 · 스트림 속 서버 오류")
+    import io
+    from summarize.vision import to_data_url
+    from summarize.llm import OpenAICompatSummarizer, ServerError
+    from PIL import Image
+
+    class R:
+        def __init__(self, body, ctype): self.content, self.headers = body, {"Content-Type": ctype}
+        def raise_for_status(self): pass
+    class Sess:
+        def __init__(self, body, ctype): self.body, self.ctype, self.calls = body, ctype, 0
+        def get(self, url, **kw): self.calls += 1; return R(self.body, self.ctype)
+    html = Sess(b"<!DOCTYPE HTML><html>login</html>" * 50, "text/html;charset=utf-8")
+    check("HTML(로그인 페이지)은 이미지로 보내지 않음", to_data_url("http://x/download.do", session=html) is None, "")
+    buf = io.BytesIO(); Image.new("RGB", (400, 300), "white").save(buf, "PNG")
+    png = Sess(buf.getvalue(), "application/octet-stream")
+    du = to_data_url("http://x/download.do", session=png)
+    check("주어진 세션으로 받음 + 진짜 이미지는 통과", png.calls == 1 and (du or "").startswith("data:image/jpeg"), (du or "")[:30])
+
+    f = Fetcher()
+    check("내장 방식 학과는 세션 없음(로그인 없이)", f.session_for({"dept_id": "h", "fetch_type": "html"}) is None, "")
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+            self.wfile.write(b'data: {"error":{"message":"Failed to decode image. Reason: unknown image type"}}\n\ndata: [DONE]\n\n')
+        def log_message(self, *a): pass
+    srv = HTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
+    sm = OpenAICompatSummarizer(base_url=f"http://127.0.0.1:{srv.server_port}/v1", model="m")
+    try:
+        sm._call_stream(f"http://127.0.0.1:{srv.server_port}/v1/chat/completions", {"stream": True}); msg = ""
+    except ServerError as e:
+        msg = str(e)
+    srv.shutdown()
+    check("스트림 속 서버 오류를 사유로(빈응답으로 뭉개지 않음)", "Failed to decode image" in msg, msg)
+
+
 def test_diff_seed_new_limit():
     print("[test] 차집합 · 시딩 · UPDATE_LIMIT")
     store, path = temp_store([DEPT])
@@ -787,8 +903,8 @@ def test_subscribe_logic():
 
 
 if __name__ == "__main__":
-    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template, test_generic_options, test_plugins, test_ssupath_login,
-              test_diff_seed_new_limit, test_crawl_health, test_llm_client,
+    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template, test_generic_options, test_plugins, test_ssupath_login, test_category_rename,
+              test_diff_seed_new_limit, test_crawl_health, test_llm_client, test_llm_timeout_vs_disconnect, test_image_and_stream_errors,
               test_run_once_e2e, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
               test_subscribe_logic, test_dst_routing):

@@ -84,6 +84,16 @@ class Fetcher:
             self._plugins[did] = p
         return p
 
+    def session_for(self, dept):
+        """이 학과의 파일(이미지 등)을 받을 세션. 플러그인 학과는 그 플러그인의 로그인 세션,
+        그 외는 None(=로그인 없이). 로그인이 필요한 사이트의 첨부는 로그인 없이 받으면 HTML이 온다."""
+        if dept.get("fetch_type", "html") in BUILTIN_TYPES:
+            return None
+        try:
+            return self._plugin(dept).session
+        except Exception:
+            return None
+
     def paginated(self, dept):
         """list_url의 {{page}} 처럼 2·3페이지를 긁을 수 있는가(시딩·재크롤 페이지 수 결정)."""
         ftype = dept.get("fetch_type", "html")

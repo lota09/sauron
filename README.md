@@ -40,12 +40,16 @@ python main.py query "수강신청" --dst mono   # 7) 제목 검색 → 선택 �
 - `run`  : 워커 상시 + `CRAWL_INTERVAL_SEC`(기본 600s)마다 크롤 반복. (기본 모드)
 - `once` : 부팅 재적재 → 크롤 1회 → 요약 드레인 → 종료. cron에 걸면 실서비스 근사.
 - `redo N` : 임의 N개 학과 최신 공지 1건을 `notices`에서 지워 **신규처럼 재처리**·발송. 크롤 X. 기본 10 (`redo 0` = 0건).
+  옵션: `--depts a,b`(이 학과들에서만) · `--exclude a,b`(제외) · `--per K`(학과당 K건) · `--random`(1페이지에서 임의로).
+  예) 새 학과 동작 확인: `python main.py redo 4 --depts job_empl,ssupath --per 2 --random --dst mono`
+- `check` : 학과별 수집 점검 — 목록 1페이지 → 최신 공지 상세까지 실제로 받아 표로 보여 줌(발송·DB 기록 없음).
+  목록 0건(link_selector 어긋남) · 본문 0자(content_selector 어긋남) · 30일 넘게 신규 없음(조용한 고장 의심)을 표시. `--depts a,b`로 일부만.
 - `query "검색어"` : 제목에 검색어가 든 공지(시딩분 포함) 검색 → 번호 선택 → [1] 재처리 / [2] DB에서 제거.
 
 **`--dst`(전송 대상, 택1, 기본 `null`):**
 - `null`(기본) : 전송 안 함(구 dryrun). 처리·요약은 하되 디스코드로 안 보냄.
-- `mono` : 사전지정 **통합채널**(`config.MONO_CHANNEL_ID`) 하나로 몰빵(무멘션).
-- `poly` : **각 학과 전용 채널**로 발송(+`@everyone`).
+- `mono` : **통합채널**(setup_guild가 만들고 ID를 DB `app_meta`에 저장) 하나로 몰빵.
+- `poly` : **각 학과 전용 채널**로 발송(멘션 없음 — 구독자는 역할로 채널을 봄).
 - `<채널ID>` : 명시한 단일 채널로(무멘션).
 
 **`--nosummary`(직교 플래그):** 요약(+상세 fetch) 생략. `--dst null` 과 함께면 **순수 시딩**, 발송 대상과 함께면 **제목+링크만** 발송(자원 절약).
@@ -64,7 +68,7 @@ python main.py query "수강신청" --dst mono   # 7) 제목 검색 → 선택 �
 python tests/run_tests.py
 ```
 
-픽스처 + 모의 LLM 서버로 검증: 크롤 파싱 · 차집합/시딩/UPDATE_LIMIT · LLM 클라이언트(정상·거절감지·E2B→E4B 승격) · run_once end-to-end(임시 DB에 공지 요약 저장) · `--dst` 인자 파싱/채널 라우팅. **현재 59/59 통과.**
+픽스처 + 모의 LLM 서버로 검증: 크롤 파싱 · 차집합/시딩/UPDATE_LIMIT · LLM 클라이언트(정상·거절감지·E2B→E4B 승격) · run_once end-to-end(임시 DB에 공지 요약 저장) · `--dst` 인자 파싱/채널 라우팅 · 플러그인(가짜 SSO 서버로 슈패스 로그인) · 수집 실패 알림 · LLM 시간초과/끊김/서버오류 구분. **현재 130/130 통과.** 테스트는 토큰을 읽지 않으므로 실제 디스코드로 나가지 않는다.
 
 ## LLM 런타임 (OlliteRT) 참고
 
@@ -122,7 +126,7 @@ tests/
 |---|---|---|
 | `dept_id` | ✓ | 영문·숫자·`_-` 슬러그. 한 번 정하면 바꾸지 말 것(공지 기록의 키) |
 | `name_ko` | ✓ | 표시 이름 = 디스코드 채널·역할 이름 |
-| `kind` | | `general`(전교 공통) · `major`(학과, 기본) · `etc` — 구독 화면의 단계 |
+| `kind` | | `general`(홍보센터 — 전교 공지) · `major`(학과, 기본) · `etc`(기타) — 구독 화면의 단계이자 채널 카테고리 |
 | `college` | | 단과대. `major`는 이 이름의 카테고리 아래 채널이 생긴다 |
 | `list_url` | ✓ | 목록 주소. 페이지가 있으면 `{{page}}` 자리표시 |
 | `fetch_type` | | `html`(기본) 또는 `json_api` — **수집 방식**만 있고 사이트 전용 타입은 없다 |
@@ -166,8 +170,8 @@ python -m notify.discord_bot           # 구독 봇 상주(게이트웨이)
 
 - `setup_guild.py` — 학과별 **역할 + 비공개 채널**(단과대 카테고리 아래, 역할 보유자만 열람) 생성 + **감시(디버그) 채널 자동 생성**(이름 `DEBUG_CHANNEL_NAME`, 기본 `사우론-감시`) → 그 ID를 `app_meta` 에 저장. **이름으로 실존 확인**하므로 재실행해도 중복 안 만들고 재사용. idempotent.
   - 즉 감시채널 ID를 손으로 안 넣어도 된다(수동 지정은 `DEBUG_CHANNEL_ID`). 통합채널(`--dst mono`)만 curation 대상이라 `MONO_CHANNEL_ID`(또는 `--dst <채널ID>`)로 명시한다.
-- `discord_bot.py` — `/구독` → **3단계**(kind 기준): ① **공통**(scatch 전교공지, 한 화면·학사 강조) → ② **전공**(단과대→학과, `← 다른 단과대`로 여러 단과대 반복) → ③ **기타**. 각 Select 선택은 **즉시** 역할 부여/회수 + DB 반영(부분드롭 방지). 완료 시 현황 임베드. 전부 ephemeral.
-  - 다전공·공통 동시 구독을 /구독 **한 번**으로 처리(단계 분리 + 루프백 버튼). 임베드 스타일은 `docs/embed_gallery.html` H·I·J·K.
+- `discord_bot.py` — `/구독` → **3단계**(kind 기준): ① **홍보센터**(전교 공지, 한 화면·학사 강조) → ② **전공**(단과대→학과, `← 다른 단과대`로 여러 단과대 반복) → ③ **기타**. 각 Select 선택은 **즉시** 역할 부여/회수 + DB 반영(부분드롭 방지). 완료 시 현황 임베드. 전부 ephemeral.
+  - 다전공·홍보센터 동시 구독을 /구독 **한 번**으로 처리(단계 분리 + 루프백 버튼). 임베드 스타일은 `docs/embed_gallery.html` H·I·J·K.
 - `kind`(general/major/etc)는 `depts` 컬럼이 단일 기준(프리픽스 규칙 의존 X). general=scatch 포털 8종, major=단과대 소속, etc=그 외.
 - 봇 권한: **Manage Roles / Manage Channels**, 봇 역할이 학과 역할들보다 상위여야 함.
 - 순수 로직(`subscribe_logic.py`)은 오프라인 테스트됨. 게이트웨이 동작은 토큰으로 기기에서. 봇은 `logging`으로 로그인·명령·역할부여·오류를 출력.

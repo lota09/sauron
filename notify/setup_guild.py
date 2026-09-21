@@ -59,6 +59,46 @@ def _token():
         return json.load(f)["bot_token"]
 
 
+def _category_name(d):
+    """학과가 들어갈 카테고리 이름. college가 아니라 kind로 정한다(college 컬럼은 '단과대'로 순수 유지)."""
+    kind = d.get("kind") or "major"
+    if kind == "general":
+        return config.GENERAL_CATEGORY_NAME
+    if kind == "etc":
+        return config.ETC_CATEGORY_NAME
+    return (d.get("college") or "").strip() or config.ETC_CATEGORY_NAME
+
+
+async def _rename_categories(depts, all_channels, find, cache):
+    """설정에서 카테고리 이름을 바꿨을 때, 새로 만들지 않고 기존 카테고리의 이름을 바꾼다(권한·위치 유지).
+    '기존 카테고리' = 그 종류 학과 채널들이 지금 가장 많이 들어 있는 카테고리.
+    원하는 이름이 이미 있으면 아무것도 안 한다 → 두 번째 실행부터는 no-op(멱등).
+    DB에 카테고리 ID를 따로 두지 않고 길드의 실제 상태로 판단한다(이 파일의 원칙과 같음)."""
+    cats = {c.id: c for c in all_channels if isinstance(c, discord.CategoryChannel)}
+    names = {c.name for c in cats.values()}
+    for kind, want in (("general", config.GENERAL_CATEGORY_NAME), ("etc", config.ETC_CATEGORY_NAME)):
+        if want in names:
+            continue
+        count = {}
+        for d in depts:
+            if (d.get("kind") or "major") != kind:
+                continue
+            ch = find(config.DISCORD_CHANNEL_PREFIX + (d.get("name_ko") or d["dept_id"]))
+            cid = getattr(ch, "category_id", None)
+            if cid in cats:
+                count[cid] = count.get(cid, 0) + 1
+        if not count:
+            continue                                   # 채널이 아직 없음 → 생성 단계가 새 이름으로 만든다
+        cid = max(count, key=count.get)
+        old = cats[cid]
+        print(f"[카테고리 이름 변경] {old.name} → {want} (그 안의 {kind} 채널 {count[cid]}개 기준)"
+              + (" (dry)" if DRY else ""))
+        if not DRY:
+            old = await old.edit(name=want, reason="sauron 카테고리 이름 설정 변경") or old
+        cache[want] = old                              # 바로 뒤 _ensure_category가 새로 만들지 않게
+        names.add(want)
+
+
 async def _ensure_category(guild, name, cache):
     if name in cache:
         return cache[name]
@@ -142,17 +182,11 @@ async def run(gid):
             me = guild.me or guild.get_member(client.user.id)     # 봇 멤버(전송 허용 overwrite용)
             depts = store.active_depts()
             cat_cache = {}
+            await _rename_categories(depts, all_channels, _find, cat_cache)
             created_r = created_c = reused_r = synced_c = 0   # synced_c: 이미 있어 소급 처리한 채널(갱신+유지 통합)
             for d in depts:
                 did, name = d["dept_id"], (d.get("name_ko") or d["dept_id"])
-                # 카테고리는 college가 아니라 kind로 결정(college 컬럼은 '단과대'로 순수 유지).
-                kind = d.get("kind") or "major"
-                if kind == "general":
-                    college = "공통 공지"
-                elif kind == "etc":
-                    college = "기타"
-                else:
-                    college = (d.get("college") or "").strip() or "기타"
+                college = _category_name(d)
 
                 # ── 역할: name_ko에서 단과대 뗀 이름으로 존재 확인 → 없으면 생성, 있으면 재사용 ──
                 rname = _role_name(d)      # 예: 'IT대학 AI융합학부' → 'AI융합학부'
@@ -185,7 +219,12 @@ async def run(gid):
                 elif DRY:
                     # dry는 역할을 실제로 안 만들어 ow가 None일 수 있음 → 존재 사실만 보고(권한 소급은 실행 때).
                     synced_c += 1
-                    print(f"[채널 존재·소급예정(dry)] {college} / {ch.name}")
+                    cur = next((c.name for c in all_channels if c.id == getattr(ch, "category_id", None)), None)
+                    target = cat_cache[college].name if college in cat_cache else college
+                    if cur != target:
+                        print(f"[채널 이동(dry)] {cur} → {target} / {ch.name}")
+                    else:
+                        print(f"[채널 존재·소급예정(dry)] {college} / {ch.name}")
                 elif ow:
                     cat = await _ensure_category(guild, college, cat_cache)
                     synced_c += 1

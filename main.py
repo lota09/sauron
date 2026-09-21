@@ -6,7 +6,10 @@ main.py — 진입점.
     run          상시: 워커 + 크롤 스케줄 루프 (기본)
     once         1회: (재적재+)크롤 1회 처리 후 종료. cron에 걸면 실서비스 근사
     redo N       임의 N개 학과 최신 공지 강제 재처리(크롤 X)
+                 옵션: --depts a,b (이 학과들에서만) · --exclude a,b (이 학과 제외)
+                       --per K (학과당 K건) · --random (1페이지에서 임의로, 없으면 최신)
     query "검색어" 제목 검색 → 선택 → 재처리 또는 DB에서 제거
+    check        학과별 수집 점검(목록 → 최신 공지 상세). 발송·DB 기록 없음. --depts a,b 로 일부만
 
   --dst (어디로 보낼지, 택1, 기본 null):
     null(기본)   전송 안 함(=구 dryrun)
@@ -21,6 +24,7 @@ main.py — 진입점.
     python main.py once --dst poly               # 각 채널로 최신공지 처리 (cron=실서비스 근사)
     python main.py run  --dst poly               # 상시 운영
     python main.py redo 4 --dst mono             # 임의 4개 최신공지를 통합채널로
+    python main.py redo 4 --depts job_empl,ssupath --per 2 --random --dst mono   # 지정 학과에서 2건씩 임의로
     python main.py query "수강신청" --dst mono    # 검색·선택 후 재처리
 """
 import asyncio
@@ -92,25 +96,47 @@ async def _run_forever(c):
             w.cancel()
 
 
+# 값을 하나 받는 옵션(그 다음 토큰은 모드·N·검색어로 해석하지 않는다)
+_VALUE_OPTS = ("--dst", "--depts", "--exclude", "--per")
+
+
+def _redo_opts(argv):
+    """redo 전용 옵션 → {'depts': [..]|None, 'exclude': [..], 'per': int, 'random': bool}."""
+    o = {"depts": None, "exclude": [], "per": 1, "random": "--random" in argv}
+    for i, a in enumerate(argv):
+        for key in ("depts", "exclude", "per"):
+            flag = f"--{key}"
+            val = a.split("=", 1)[1] if a.startswith(flag + "=") else (
+                argv[i + 1] if a == flag and i + 1 < len(argv) else None)
+            if val is None:
+                continue
+            if key == "per":
+                o["per"] = max(1, int(val))
+            else:
+                o[key] = [x.strip() for x in val.split(",") if x.strip()]
+    return o
+
+
 def _parse_args(argv):
     """모드 + (redo)정수/(query)검색어 + --dst VALUE + --nosummary.
-    반환: (mode, num, query, dst, nosummary)."""
+    반환: (mode, num, query, dst, nosummary). redo 전용 옵션은 _redo_opts."""
     mode = "run"
     num = None
     query = None
     dst = "null"
     nosummary = False
-    expect_dst = False
+    expect = None
     for a in argv[1:]:
-        if expect_dst:
-            dst = a
-            expect_dst = False
-        elif a in ("run", "once", "redo", "query"):
+        if expect:
+            if expect == "--dst":
+                dst = a
+            expect = None
+        elif a in _VALUE_OPTS:
+            expect = a
+        elif a in ("run", "once", "redo", "query", "check"):
             mode = a
         elif a == "--nosummary":
             nosummary = True
-        elif a == "--dst":
-            expect_dst = True
         elif a.startswith("--dst="):
             dst = a.split("=", 1)[1]
         elif a.isdigit():
@@ -128,7 +154,11 @@ def main():
             asyncio.run(run_once(c))
         elif mode == "redo":
             from devtools import debug_resummarize
-            asyncio.run(debug_resummarize(c, 10 if num is None else num))  # 명시적 0은 0으로 존중
+            asyncio.run(debug_resummarize(c, 10 if num is None else num,  # 명시적 0은 0으로 존중
+                                          **_redo_opts(sys.argv[1:])))
+        elif mode == "check":
+            from devtools import check_depts
+            asyncio.run(check_depts(c, _redo_opts(sys.argv[1:])["depts"]))
         elif mode == "query":
             if not query:
                 c.log('query 인자 필요: python main.py query "검색어"')

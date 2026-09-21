@@ -185,15 +185,18 @@ def step_setup_guild(py, can_run):
     #   (2) DB(app_meta)가 동기화돼 있는가   — --check (디스코드 접속 없이 DB만 확인)
     # (1)만 보면, 길드엔 채널이 다 있는데 app_meta만 비어 있는 상태에서 '이미 세팅됨'으로 건너뛴다.
     # 그러면 런타임이 감시채널ID를 못 읽어 디버그·요약실패 알림이 통째로 안 나간다(실제로 겪음).
-    need_create = any(("(dry)" in ln and "생성]" in ln) for ln in out.splitlines())
+    lines = out.splitlines()
+    need_create = any(("(dry)" in ln and "생성]" in ln) for ln in lines)
+    # 카테고리 이름 변경·채널 이동(kind나 카테고리 이름 설정이 바뀐 경우) — 만들 건 없어도 실제 실행이 필요
+    need_change = any(("(dry)" in ln and ("변경]" in ln or "이동" in ln)) for ln in lines)
     synced = run([py, "-m", "notify.setup_guild", "--check"], cwd=ROOT,
                  capture_output=True, text=True).returncode == 0
-    if not need_create and synced:
-        print("    → 이미 모두 세팅됨(생성할 채널/역할 없음 · app_meta 동기화 확인).")
+    if not need_create and not need_change and synced:
+        print("    → 이미 모두 세팅됨(생성·변경할 것 없음 · app_meta 동기화 확인).")
         return
     if not need_create:
-        print("    ⚠ 길드엔 만들 게 없지만 app_meta에 채널ID가 없습니다 "
-              "→ 생성 없이 '동기화만' 수행합니다(권한·카테고리 소급 + 채널ID 기록).")
+        print("    → 새로 만들 건 없고 " + ("카테고리 이름·채널 위치 변경" if need_change else "app_meta 채널ID 기록")
+              + "만 반영합니다(권한·카테고리 소급).")
         ok = True
     else:
         ok = yn("    위 항목을 이대로 생성하며 진행하시겠습니까?", False)

@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS depts (
   dept_id            TEXT PRIMARY KEY,      -- 안정 슬러그. 예: 'cse', 'eco', 'notice_haksa'
   name_ko            TEXT NOT NULL,         -- 학과/카테고리 표시명
   kind               TEXT NOT NULL DEFAULT 'major',
-                     -- 구독 분류(봇 3단계 기준). 'general'(전교공통) | 'major'(전공) | 'etc'(기타)
-                     --  general = 전교 공통(학사·장학 등), major = 단과대 소속 학과, etc = 그 외
+                     -- 구독 분류(봇 3단계 기준). 'general'(홍보센터) | 'major'(전공) | 'etc'(기타)
+                     --  general = 홍보센터 전교 공지(학사·장학 등), major = 단과대 소속 학과, etc = 그 외(창업지원단·진로취업센터·슈패스 등)
   college            TEXT,                  -- 단과대
   department         TEXT,                  -- 학부
   major              TEXT,                  -- 전공(있으면)

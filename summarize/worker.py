@@ -26,10 +26,12 @@ async def summarize_one(c, notice_id: int):
     # 이미지가 있으면 요약 요청에 무조건 첨부(텍스트 유무 무관). 최대 N장(컨텍스트/지연 상한).
     #   추출(images) → 인코딩 성공(data_urls). 둘의 차이 = 로드/포맷 실패로 '입력 못 한' 장수.
     data_urls = []
+    img_session = c.fetcher.session_for(dept) if dept and hasattr(c.fetcher, "session_for") else None
     if images and config.LLM_VISION:
         cand = images[:config.LLM_VISION_MAX_IMAGES]
         for img in cand:
-            du = await asyncio.to_thread(to_data_url, img.get("url", ""), config.LLM_VISION_MAX_PX)
+            du = await asyncio.to_thread(to_data_url, img.get("url", ""), config.LLM_VISION_MAX_PX,
+                                         None, img_session)
             if du:
                 data_urls.append(du)
             else:

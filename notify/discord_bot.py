@@ -2,12 +2,12 @@
 """
 notify/discord_bot.py — 구독 봇 (C안, 임베드+3단계). discord.py 2.x.
 
-`/구독` → ① 공통(전교 공통 공지, 한 화면) → ② 전공(단과대→학과, '다른 단과대'로 반복) → ③ 기타
+`/구독` → ① 홍보센터(전교 공지, 한 화면 · 이름은 config GENERAL_CATEGORY_NAME) → ② 전공(단과대→학과, '다른 단과대'로 반복) → ③ 기타
 각 단계의 Select 선택은 즉시 역할 부여/회수 + subscriptions DB 반영(부분드롭 방지). 전부 ephemeral.
 
 - kind('general'|'major'|'etc')로 단계를 나눠, 서로 다른 단과대 다전공도 /구독 한 번으로 처리.
 - 전공은 Discord Select 25개 한계를 단과대 그룹핑으로 우회. '← 다른 단과대'로 여러 단과대 반복 선택.
-- 임베드 스타일: 갤러리 H(공통)·I(전공)·J(완료)·K(현황). 색상으로 단계 구분.
+- 임베드 스타일: 갤러리 H(홍보센터)·I(전공)·J(완료)·K(현황). 색상으로 단계 구분.
 
 `/상태` → 크롤러(생존·하트비트·직전 신규) + 요약 LLM 백엔드(모델·응답시간·가동) + 요약 대기 건수.
 
@@ -41,7 +41,7 @@ except ImportError:
 log = logging.getLogger("sauron.bot")
 
 # 단계별 색상(임베드 왼쪽 막대)
-C_GENERAL = 0xF23F43   # 공통(학사 계열) 빨강
+C_GENERAL = 0xF23F43   # 홍보센터(학사 계열) 빨강
 C_MAJOR   = 0x5865F2   # 전공 블러플
 C_ETC     = 0x949BA4   # 기타 회색
 C_DONE    = 0x23A55A   # 완료 초록
@@ -247,7 +247,7 @@ if _DISCORD:
 
     # ── Select 컴포넌트 ────────────────────────────────
     class DeptMultiSelect(discord.ui.Select):
-        """한 묶음(공통/한 단과대/기타)의 학과 다중선택. 선택 즉시 저장 후 같은 단계 재렌더."""
+        """한 묶음(홍보센터/한 단과대/기타)의 학과 다중선택. 선택 즉시 저장 후 같은 단계 재렌더."""
         def __init__(self, store, depts, subscribed, placeholder, step, college=None):
             self.store, self.step, self.college = store, step, college
             self.dept_ids = [d["dept_id"] for d in depts]
@@ -313,15 +313,15 @@ if _DISCORD:
     def _render_general(store, uid, note=None):
         depts = store.depts_by_kind(STEP_GENERAL, with_role=True)
         subs = store.user_subscriptions(uid)
-        desc = ("전교 공통 · 학사·장학·채용 등\n**학사 구독 권장** · 항목 선택 후 **다음**"
-                if depts else "준비된 공통 채널 없음 (관리자 `setup_guild` 필요)")
+        desc = ("전교 공지 · 학사·장학·채용 등\n**학사 구독 권장** · 항목 선택 후 **다음**"
+                if depts else f"준비된 {config.GENERAL_CATEGORY_NAME} 채널 없음 (관리자 `setup_guild` 필요)")
         if note:
             desc += f"\n\n✅ {note}"
-        embed = discord.Embed(title="① 공통 공지", description=desc, color=C_GENERAL)
+        embed = discord.Embed(title=f"① {config.GENERAL_CATEGORY_NAME} 공지", description=desc, color=C_GENERAL)
         embed.set_footer(text="1/3 · 버튼으로 언제든 재변경")
         view = discord.ui.View(timeout=180)
         if depts:
-            view.add_item(DeptMultiSelect(store, depts, subs, "공통 공지 고르기(복수 가능)", STEP_GENERAL))
+            view.add_item(DeptMultiSelect(store, depts, subs, f"{config.GENERAL_CATEGORY_NAME} 공지 고르기(복수 가능)", STEP_GENERAL))
         view.add_item(NavButton("다음 (전공) →", "major_college", store, discord.ButtonStyle.primary))
         return embed, view
 
@@ -335,7 +335,7 @@ if _DISCORD:
         view = discord.ui.View(timeout=180)
         if colleges:
             view.add_item(CollegeSelect(store, colleges))
-        view.add_item(NavButton("← 이전 (공통)", "general", store))
+        view.add_item(NavButton(f"← 이전 ({config.GENERAL_CATEGORY_NAME})", "general", store))
         view.add_item(NavButton("건너뛰기 (기타) →", "etc", store, discord.ButtonStyle.primary))
         return embed, view
 
@@ -377,7 +377,7 @@ if _DISCORD:
         total = len(s["general"]) + len(major_names) + len(s["etc"])
         lines = []
         if s["general"]:
-            lines.append("- **공통**")
+            lines.append(f"- **{config.GENERAL_CATEGORY_NAME}**")
             lines += [f"  - {n}" for n in s["general"]]
         if major_names:
             lines.append("- **학과별 공지**")
@@ -394,7 +394,7 @@ if _DISCORD:
 
     # ── 진입(공개 버튼 A) ──────────────────────────────
     async def _open_flow(interaction, store):
-        """/구독 및 공개 버튼의 공통 진입: 구독 가능 항목 확인 후 ①공통 단계를 ephemeral로 연다.
+        """/구독 및 공개 버튼의 공통 진입: 구독 가능 항목 확인 후 ①홍보센터 단계를 ephemeral로 연다.
         thinking=True 로 defer → followup 은 '새 ephemeral 메시지'라 공개 버튼 메시지는 그대로 남는다."""
         if not await _ack(interaction):
             return
@@ -412,7 +412,7 @@ if _DISCORD:
         e = discord.Embed(
             title="🔔 공지 구독",
             description=("아래 **버튼**을 눌러 받고 싶은 공지 선택\n"
-                         "· **공통** — 학사·장학·채용 등 전교 공지\n"
+                         f"· **{config.GENERAL_CATEGORY_NAME}** — 학사·장학·채용 등 전교 공지\n"
                          "· **전공** — 내 학과\n"
                          "· **기타** — 창업 등\n\n"
                          "구독하면 해당 **전용 채널**로 새 공지 자동 전달\n\n"
@@ -471,7 +471,7 @@ if _DISCORD:
             log.info("로그인: %s | %s 서버(%s)", client.user,
                      "디버깅" if debug else "실서비스", gid or "전역")
             n = {k: len(store.depts_by_kind(k, with_role=True)) for k in (STEP_GENERAL, STEP_MAJOR, STEP_ETC)}
-            log.info("구독가능(역할보유) 학과: 공통 %d · 전공 %d · 기타 %d", n["general"], n["major"], n["etc"])
+            log.info("구독가능(역할보유) 학과: 홍보센터 %d · 전공 %d · 기타 %d", n["general"], n["major"], n["etc"])
 
         @tree.command(name="상태", description="크롤러·요약 LLM의 현재 작동 상태", guild=guild_obj)
         async def status_cmd(interaction: discord.Interaction):
@@ -485,7 +485,7 @@ if _DISCORD:
                      f"{stats['done']}/{stats['failed']}" if stats else "-")
             await interaction.followup.send(embed=_status_embed(st, llm, pending, stats), ephemeral=True)
 
-        @tree.command(name="구독", description="학과·공통 공지 구독을 설정합니다", guild=guild_obj)
+        @tree.command(name="구독", description=f"학과·{config.GENERAL_CATEGORY_NAME} 공지 구독을 설정합니다", guild=guild_obj)
         async def subscribe(interaction: discord.Interaction):
             await _open_flow(interaction, store)
 

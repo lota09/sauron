@@ -341,6 +341,7 @@ class OpenAICompatSummarizer:
         parts = []
         start = time.time()
         first_tok = None          # 첫 토큰까지 걸린 시간(프리필 지연) — 서버 부하 판단의 핵심 지표
+        server_err = None         # 스트림 안에 실려 온 서버 오류 메시지
         stop = "정상종료"          # 스트림이 왜 끝났는지: [DONE] / wall / shutdown / 연결끊김
         try:
             with requests.post(url, json=payload, headers=self._headers(),
@@ -369,6 +370,10 @@ class OpenAICompatSummarizer:
                         obj = json.loads(line)
                     except ValueError:
                         continue
+                    if obj.get("error"):              # 서버가 스트림으로 오류를 보냄(예: 이미지 디코딩 실패)
+                        e_ = obj["error"]
+                        server_err = (e_.get("message") if isinstance(e_, dict) else str(e_)) or str(e_)
+                        continue
                     ch = (obj.get("choices") or [{}])[0]
                     delta = ch.get("delta") or {}
                     tok = delta.get("content")
@@ -377,14 +382,25 @@ class OpenAICompatSummarizer:
                             first_tok = time.time() - start
                         parts.append(tok)
         except self._CONN_EXC as e:
-            # 서버가 생성 도중 죽으면 여기로 온다. '몇 초 만에·몇 글자 받고' 끊겼는지가
-            # OOM(중간 사망)과 연결거부(0초·0자)를 가르는 결정적 단서라 함께 남긴다.
+            # 두 경우를 가른다(requests는 스트리밍 중 읽기 타임아웃도 ConnectionError로 감싸서 던진다):
+            #   · 읽기 시간초과 — LLM_TIMEOUT 동안 바이트가 안 옴. 첫 토큰 전이면 대개 긴 입력의 prefill이 느린 것.
+            #   · 연결 끊김     — 서버가 생성 도중 죽음(OOM 등).
             got = sum(len(p) for p in parts)
-            log.warning("[LLM 끊김] %.1fs · %s · 첫토큰 %s · 받은 %d자 → 서버가 생성 도중 연결을 끊음",
-                        time.time() - start, type(e).__name__,
-                        f"{first_tok:.1f}s" if first_tok is not None else "없음", got)
+            ftok = f"{first_tok:.1f}s" if first_tok is not None else "없음"
+            timed_out = "Read timed out" in str(e) or isinstance(e, requests.ReadTimeout)
+            if timed_out:
+                what = (f"첫 토큰 {self.timeout}s 대기 초과" if first_tok is None
+                        else f"토큰 사이 {self.timeout}s 침묵")
+                log.warning("[LLM 시간초과] %.1fs · %s · 받은 %d자 → LLM_TIMEOUT(%ds) 초과(서버는 살아 있을 수 있음)",
+                            time.time() - start, what, got, self.timeout)
+                raise ConnectionErrorLLM(f"시간초과: {what}") from e
+            log.warning("[LLM 끊김] %.1fs · %s · 첫토큰 %s · 받은 %d자 → 서버가 연결을 끊음",
+                        time.time() - start, type(e).__name__, ftok, got)
             raise ConnectionErrorLLM(f"연결/스트림 실패: {type(e).__name__}") from e
         if not parts:
+            if server_err:
+                log.warning("[LLM 서버오류] %.1fs · %s", time.time() - start, server_err[:300])
+                raise ServerError(f"서버 오류: {server_err[:300]}")
             log.warning("[LLM 빈응답] %.1fs · 스트림은 열렸으나 토큰 0개(%s)", time.time() - start, stop)
             raise ServerError("스트림 응답이 비어있음")   # 서버 응답O인데 생성 0 → 재시작 후보
         out = "".join(parts)
