@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS depts (
                      -- | 'onclick_media' | 'post_lawyer' | 'dom_materials'
                      -- | 'json_api'(JS프론트 사이트의 JSON API — 상세는 fetch_config)
                      -- | 'login_*'(향후 ssupath 등, 현재 미사용)
-  fetch_config       TEXT,                  -- json_api 등 확장 파서용 JSON 설정(html 사이트는 NULL)
+  fetch_config       TEXT,                  -- json_api 등 확장 파서용 JSON 설정
+                     -- html: (선택) 링크 조립 — href 대신 다른 속성에서 키를 꺼내 URL을 만든다
+                     --   {"link_attr":"data-params","url_template":"view.do?seq={seq}"}  (속성값 JSON)
+                     --   {"link_attr":"onclick","link_regex":"fnView\\('(?P<id>\\d+)'\\)","url_template":"...{id}"}
+                     --   NULL이면 href 그대로(기존 html 사이트 전부)
                      -- json_api 키: list_url({page})·list_path·id_key·title_key·url_template
                      --   ·content_key·content_format(html|lexical|plain)·page_base·headers
   login              INTEGER NOT NULL DEFAULT 0,  -- 인증 필요 여부(향후). 0=공개

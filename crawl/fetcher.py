@@ -8,6 +8,11 @@ crawl/fetcher.py — 크롤러 (ICT tools/fetch_tool.py 이식·정리)
 
 fetch_type:
   html          : 제네릭 CSS (link_selector / content_selector)
+                  + (선택) fetch_config 링크 조립: 링크가 href가 아니라 다른 속성에 있는 사이트용.
+                    {"link_attr": "data-params", "url_template": ".../view.do?seq={sjrSeq}"}      ← 속성값이 JSON
+                    {"link_attr": "onclick", "link_regex": "fnView\\('(?P<id>\\d+)'\\)",
+                     "url_template": ".../view.do?id={id}"}                                   ← 속성값에서 정규식 추출
+                    fetch_config가 없으면 지금처럼 href를 그대로 쓴다(기존 사이트 동작 불변).
   json_ssfilm   : 영화예술 JSON API
   json_mediamba : 미디어경영 JSON API
   onclick_media : 글로벌미디어 onclick viewData()
@@ -89,19 +94,56 @@ class Fetcher:
             if ftype == "json_api":
                 return self._list_json_api(dept)
             return self._list_generic(url, dept.get("link_selector"), prefix,
-                                      retry=self._needs_retry(dept))
+                                      retry=self._needs_retry(dept),
+                                      link_cfg=self._link_cfg(dept))
         except Exception as e:
             raise FetchError(f"scrape_list 실패({dept['dept_id']} p{page}): {e}")
 
-    def _list_generic(self, url, link_selector, prefix, retry=False):
+    @staticmethod
+    def _link_cfg(dept):
+        """html 사이트의 선택적 링크 조립 설정. fetch_config에 url_template이 있을 때만 켜진다.
+        없으면 None → href 그대로(기존 동작)."""
+        raw = dept.get("fetch_config")
+        if not raw:
+            return None
+        cfg = raw if isinstance(raw, dict) else json.loads(raw)
+        return cfg if cfg.get("url_template") else None
+
+    @staticmethod
+    def _build_link(el, cfg, base_url):
+        """요소의 속성값에서 키를 뽑아 url_template을 채운다. 키가 없는 요소(썸네일 링크 등)는 None.
+        link_regex가 있으면 정규식(이름 있는 그룹 → {name}, 번호 그룹 → {0}{1}…), 없으면 JSON으로 해석."""
+        raw = el.get(cfg.get("link_attr", "href"))
+        if not raw:
+            return None
+        if cfg.get("link_regex"):
+            m = re.search(cfg["link_regex"], raw)
+            if not m:
+                return None
+            args, kwargs = m.groups(), m.groupdict()
+        else:
+            kwargs = json.loads(raw)
+            args = ()
+        try:
+            return urljoin(base_url, cfg["url_template"].format(*args, **kwargs))
+        except (KeyError, IndexError) as e:
+            # 템플릿 키가 속성에 없음 = 설정 오류(사이트 구조 변경 포함). 조용히 넘기면 전건 누락이라 터뜨린다.
+            raise FetchError(f"url_template 키 불일치: {e} (속성값={raw[:120]})")
+
+    def _list_generic(self, url, link_selector, prefix, retry=False, link_cfg=None):
         if not (link_selector and link_selector.strip()):
             return []  # 셀렉터 미정 학과
         resp = self._get(url, retry_on_error_page=retry)
         soup = BeautifulSoup(resp.content, "html.parser")
         out = []
         for a in soup.select(link_selector):
-            href = a.get("href")
             text = a.get_text(strip=True)
+            if link_cfg:
+                full = self._build_link(a, link_cfg, url)
+                if full and text and len(text) > 3:
+                    out.append({"title": text, "url": full})
+                continue
+            href = a.get("href")
             if href and text and len(text) > 3:
                 full = urljoin(url, href)
                 full = full.split("PHPSESSID=")[0]  # 세션id 제거

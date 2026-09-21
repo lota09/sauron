@@ -243,6 +243,52 @@ def test_json_api():
     check("json_api lexical 본문", "미디어본문X" in d2["content"], d2["content"][:60])
 
 
+def test_html_link_template():
+    print("[test] html 링크 조립(fetch_config: link_attr·url_template·link_regex)")
+    f = Fetcher()
+    # 진로취업센터 실물 구조 근사: href="#", 키는 data-params(JSON). 카드마다 썸네일 링크(텍스트 없음)가 섞임.
+    html = ("""<table><tr><td><a class="detailBtn" href="#" data-params='{"sjrSeq":"aa11","paginationInfo.currentPageNo":"1"}'>이마트 신입사원 모집</a></td></tr>"""
+            """<tr><td><a class="detailBtn" href="#" data-params='{"sjrSeq":"bb22","paginationInfo.currentPageNo":"1"}'><img src="t.png"></a>"""
+            """<a class="detailBtn" href="#" data-params='{"sjrSeq":"bb22","paginationInfo.currentPageNo":"1"}'>NH투자증권 대졸 신입</a></td></tr></table>"""
+            """<a class="fn" href="javascript:void(0)" onclick="fnView('9001','A')">onclick 방식 공지 제목</a>""")
+
+    class Resp:
+        content = html.encode()
+    f._get = lambda url, retry_on_error_page=False: Resp()
+
+    base = {"dept_id": "t", "fetch_type": "html", "url_prefix": "",
+            "list_url": "https://job.x/service/careerEmpl/opportunityList.do?currentPageNo={{page}}"}
+
+    # 1) 설정 없음 = 기존 동작(href). href="#"라 전부 목록 주소로 뭉개지는 게 '기존 동작'이다 — 이게 B안이 필요한 이유.
+    items = f.scrape_list({**base, "link_selector": "a.detailBtn"}, 1)
+    check("설정 없으면 href 그대로(기존 동작 불변)", len({i["url"] for i in items}) == 1, str(items))
+
+    # 2) JSON 속성 + 템플릿: 고유 URL, 썸네일 링크(텍스트 없음) 제외
+    cfg = '{"link_attr": "data-params", "url_template": "opportunityInfo.do?sjrSeq={sjrSeq}"}'
+    items = f.scrape_list({**base, "link_selector": "a.detailBtn", "fetch_config": cfg}, 1)
+    urls = [i["url"] for i in items]
+    check("data-params → 2건", len(items) == 2, str(items))
+    check("상대 템플릿 → 절대 URL",
+          urls[0] == "https://job.x/service/careerEmpl/opportunityInfo.do?sjrSeq=aa11", str(urls))
+    check("썸네일 링크(텍스트 없음) 제외", urls.count("https://job.x/service/careerEmpl/opportunityInfo.do?sjrSeq=bb22") == 1, str(urls))
+
+    # 3) 정규식 모드: onclick 에서 이름 있는 그룹 / 번호 그룹
+    rx = {"link_attr": "onclick", "link_regex": r"fnView\('(?P<id>\d+)','(\w)'\)",
+          "url_template": "/view.do?id={id}&t={1}"}
+    items = f.scrape_list({**base, "link_selector": "a.fn", "fetch_config": json.dumps(rx)}, 1)
+    check("onclick 정규식(이름·번호 그룹)", items == [{"title": "onclick 방식 공지 제목",
+                                               "url": "https://job.x/view.do?id=9001&t=A"}], str(items))
+
+    # 4) 템플릿 키가 속성에 없으면 조용히 누락하지 않고 실패
+    bad = '{"link_attr": "data-params", "url_template": "x.do?seq={encSddpbSeq}"}'
+    try:
+        f.scrape_list({**base, "link_selector": "a.detailBtn", "fetch_config": bad}, 1)
+        raised = False
+    except Exception:
+        raised = True
+    check("템플릿 키 불일치 → 예외(전건 누락 방지)", raised, "")
+
+
 def test_diff_seed_new_limit():
     print("[test] 차집합 · 시딩 · UPDATE_LIMIT")
     store, path = temp_store([DEPT])
@@ -490,7 +536,7 @@ def test_subscribe_logic():
 
 
 if __name__ == "__main__":
-    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api,
+    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template,
               test_diff_seed_new_limit, test_llm_client,
               test_run_once_e2e, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
