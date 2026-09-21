@@ -162,6 +162,34 @@ class Store:
                 "ORDER BY id DESC LIMIT ?", (query, limit)).fetchall()
         return [dict(r) for r in rows]
 
+    def summary_stats(self, hours: int = 24) -> Dict[str, Any]:
+        """최근 N시간 요약 처리 성적(/상태 표시용). LLM이 '살아있는지'(/health)가 아니라
+        '실제로 요약이 되는지'를 본다 — 서버는 200을 주는데 생성만 계속 실패하는 상태를 잡기 위함.
+        반환: {done, failed, no_content, total, fail_rate, last_fail_reason, last_fail_title, last_fail_at}."""
+        since = f"-{int(hours)} hours"
+        out = {"hours": int(hours), "done": 0, "failed": 0, "no_content": 0,
+               "last_fail_reason": None, "last_fail_title": None, "last_fail_at": None}
+        key = {"done": "done", "summary_failed": "failed", "no_content": "no_content"}
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT status, COUNT(*) n FROM notices "
+                "WHERE updated_at >= datetime('now', ?) AND status IN ('done','summary_failed','no_content') "
+                "GROUP BY status", (since,)).fetchall()
+            last = self._con.execute(
+                "SELECT title, fail_reason, updated_at FROM notices WHERE status='summary_failed' "
+                "ORDER BY updated_at DESC LIMIT 1").fetchone()
+        for r in rows:
+            k = key.get(r["status"])
+            if k:
+                out[k] = r["n"]
+        if last:
+            out["last_fail_title"] = last["title"]
+            out["last_fail_reason"] = last["fail_reason"]
+            out["last_fail_at"] = last["updated_at"]
+        out["total"] = out["done"] + out["failed"]          # no_content는 LLM 성적이 아님(호출 자체를 안 함)
+        out["fail_rate"] = (out["failed"] / out["total"]) if out["total"] else None
+        return out
+
     def recent_notices(self, limit: int = 20) -> List[Dict[str, Any]]:
         with self._lock:
             rows = self._con.execute(
@@ -180,6 +208,19 @@ class Store:
                 "INSERT INTO app_meta(key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
             self._con.commit()
+
+    def delete_meta(self, key: str) -> None:
+        with self._lock:
+            self._con.execute("DELETE FROM app_meta WHERE key=?", (key,))
+            self._con.commit()
+
+    def meta_with_prefix(self, prefix: str) -> Dict[str, str]:
+        """접두어로 시작하는 키 전부(예: 'crawl_fail:' → 학과별 실패 상태)."""
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT key, value FROM app_meta WHERE substr(key, 1, ?) = ?",
+                (len(prefix), prefix)).fetchall()
+        return {r["key"]: r["value"] for r in rows}
 
     # ── 구독 (후속 단계에서 봇이 사용) ─────────────────
     def add_user(self, discord_user_id: str):

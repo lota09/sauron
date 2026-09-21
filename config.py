@@ -49,17 +49,18 @@ def _get_bool(key, default):
 DB_PATH = _get("SAURON_DB", os.path.join(_HERE, "db", "notice.db"))
 
 # ── 요약 LLM (OpenAI 호환) ───────────────────────────
-# 개발: http://192.168.50.153:8000/v1 · 배포(Note20): http://localhost:8000/v1
-LLM_BASE_URL = _get("LLM_BASE_URL", "http://192.168.50.153:8000/v1")
+# 기본은 같은 기기의 로컬 서버. 다른 기기의 서버를 쓰면 설정 파일에서 덮어쓴다(개발 PC의 LAN 주소 등).
+LLM_BASE_URL = _get("LLM_BASE_URL", "http://localhost:8000/v1")
 LLM_API_KEY = _get("LLM_API_KEY", "sk-none")          # 로컬 런타임은 보통 불필요
 # 'auto'(기본) = 시작 시 서버에 로드된 모델을 1회 조회해 자동 확정(/health → /v1/models).
-#   특정 모델을 강제하려면 정확한 이름을 넣는다. 확인: curl http://192.168.50.153:8000/v1/models
+#   특정 모델을 강제하려면 정확한 이름을 넣는다. 확인: curl <LLM_BASE_URL>/models
 LLM_MODEL = _get("LLM_MODEL", "auto")
 LLM_MODEL_FALLBACK = _get("LLM_MODEL_FALLBACK", "")    # 품질 미달 시 승격. 빈값=미사용
-# 타임아웃(초): connect=서버 연결 대기, read=스트리밍 중 바이트 간 최대 침묵, wall=한 요약 총 상한.
-# 이 기기는 GPU라 첫 토큰 5~15초 → read 20이면 충분. 서버 다운 시 connect 10초로 빠르게 실패.
+# 타임아웃(초): connect=서버 연결 대기, read=스트리밍 중 바이트 간 최대 침묵(★첫 토큰 대기 포함), wall=한 요약 총 상한.
+# read는 '첫 토큰이 나올 때까지'도 포함한다. 긴 본문+이미지는 폰에서 prefill만 20초를 넘긴다(실측: 첫 토큰 최대 15.8s 성공,
+# 6천자+이미지 3건은 20s에서 잘림 — requests는 이 경우 ReadTimeout이 아니라 ConnectionError를 낸다). wall이 멈춤을 따로 잡는다.
 LLM_CONNECT_TIMEOUT = _get_int("LLM_CONNECT_TIMEOUT", 10)
-LLM_TIMEOUT = _get_int("LLM_TIMEOUT", 20)              # read timeout
+LLM_TIMEOUT = _get_int("LLM_TIMEOUT", 60)              # read timeout(첫 토큰 대기 포함)
 LLM_WALL_TIMEOUT = _get_int("LLM_WALL_TIMEOUT", 120)   # 한 요약 총 벽시계 상한(반복폭주 방지)
 # /상태 의 백엔드 생존 점검(probe_backend) 타임아웃. 디스코드 응답 예산(defer 후 15분이지만
 # 사용자 체감 상 수 초) 안에 끝나야 하므로 요약용 타임아웃과 따로 짧게 둔다.
@@ -81,7 +82,7 @@ LLM_RETRY_LIMIT = _get_int("LLM_RETRY_LIMIT", 1)
 LLM_RETRY_WAIT_SEC = _get_int("LLM_RETRY_WAIT_SEC", 5)   # 연결 실패 시 재시도 전 대기(초)
 
 # ── 멀티모달(비전) — 이미지 대체 공지 구제 ─────────────
-#  본문·OCR 모두 없고 이미지만 있는 공지(제목O·본문X·그림O)를 비전 LLM으로 요약 시도.
+#  본문 없이 이미지만 있는 공지(제목O·본문X·그림O)를 비전 LLM으로 요약 시도.
 #  ⚠ 2B 비전은 정확도 한계(브랜드/날짜 오독·환각 관측). '없는 것보단 낫다 + 면책문구' 관점의 best-effort.
 #  반복붕괴는 strip_degenerate가, 언어이탈은 검증기가 잡고, 실패 시 리롤(프롬프트 미세변형).
 # 공지에 이미지가 있으면 요약 요청에 '무조건' 첨부(텍스트 유무·글자수 무관). 프롬프트는 텍스트용과 공유
@@ -89,7 +90,7 @@ LLM_RETRY_WAIT_SEC = _get_int("LLM_RETRY_WAIT_SEC", 5)   # 연결 실패 시 재
 LLM_VISION = _get_bool("LLM_VISION", True)                    # 이미지 첨부 on/off
 # ⚠ 다운스케일 트레이드오프(probe 실측): 768~1024는 포스터 날짜를 정독하면서 다중이미지 페이로드를 크게 줄인다
 #   (2479px 원본 3장 ~3MB → ~0.5MB). 512는 글자가 뭉개져 '환각 날짜'가 나옴 → 768 미만 금지.
-#   조밀한 표까지 정밀 추출이 필요하면 다운스케일이 아니라 타일링/OCR로. Pillow 없으면 이 값 무시(원본 전송).
+#   조밀한 표까지 정밀 추출이 필요하면 다운스케일이 아니라 타일링으로. Pillow 없으면 이 값 무시(원본 전송).
 LLM_VISION_MAX_PX = _get_int("LLM_VISION_MAX_PX", 1024)       # 전송 전 최대 변(px)
 LLM_VISION_MAX_IMAGES = _get_int("LLM_VISION_MAX_IMAGES", 4)  # 한 요청 최대 이미지 수(컨텍스트/지연 상한)
 # 아이콘·썸네일 등 초소형 이미지는 비전에 안 넣는다(LiteRT 텐서버퍼 크래시·무의미 입력 방지).
@@ -114,7 +115,7 @@ LLM_SYSTEM_PROMPT = (
 )
 LLM_USER_TEMPLATE = """다음 학사공지를 개조식 불릿으로 요약해줘.
 - 각 항목은 '- '로 시작하는 한 줄. 하위 불릿(들여쓰기)은 쓰지 말고 최상위 불릿만.
-- 문장은 '4학년 대상', '신청 가능'처럼 종결어미 생략 또는 '~함/~임/~바람'.
+- 문장은 종결어미를 생략한 명사형 또는 '~함/~임/~바람'으로 끝낸다. 공지에 없는 대상·조건을 지어내지 말 것.
 - 분량은 공지 정보량에 따라 2줄에서 6줄 사이를 유지. 핵심만 추리고 세부 조건·목록을 전부 나열하지 말 것.
 - 주요일정·대상·신청방법을 우선 포함. 장소·주의사항은 정말 중요할 때만.
 - 인사말·설명·머리말 없이 불릿만 출력.
@@ -125,16 +126,11 @@ LLM_USER_TEMPLATE = """다음 학사공지를 개조식 불릿으로 요약해�
 [본문]
 {body}"""
 
-# ── Clova 폴백(요약 실패건 한정) ─────────────────────
-CLOVA_ENABLE = _get_bool("CLOVA_ENABLE", False)
-
-# ── OCR ──────────────────────────────────────────────
-OCR_BACKEND = _get("OCR_BACKEND", "none")   # 'tesseract' | 'paddle' | 'none'
-OCR_LANG = _get("OCR_LANG", "kor")
-OCR_TIMEOUT = _get_int("OCR_TIMEOUT", 60)
 
 # ── 크롤 ─────────────────────────────────────────────
-UPDATE_LIMIT = _get_int("UPDATE_LIMIT", 5)      # 신규가 이보다 많으면 사이트깨짐 의심→대량알림 차단
+UPDATE_LIMIT = _get_int("UPDATE_LIMIT", 10)     # 신규가 이보다 많으면 사이트깨짐 의심→대량알림 차단
+# 수집 실패 알림: 처음·원인 변경·복구 때만 보내고, 같은 원인이 계속되면 이 간격마다 '아직 실패 중' 한 번.
+CRAWL_FAIL_REMIND_SEC = _get_int("CRAWL_FAIL_REMIND_SEC", 6 * 3600)
 SEED_PAGES = _get_int("SEED_PAGES", 3)          # depts.seed_pages 없을 때 기본
 JSON_API_SCAN_PAGES = _get_int("JSON_API_SCAN_PAGES", 12)  # json_api 본문 캐시 미스 시 훑을 최대 페이지수(깊은페이지 재처리)
 REQUEST_TIMEOUT = _get_int("REQUEST_TIMEOUT", 30)          # read timeout(초): 연결 후 응답 대기
@@ -150,7 +146,6 @@ BOT_PRESENCE_INTERVAL_SEC = _get_int("BOT_PRESENCE_INTERVAL_SEC", 120)
 USER_AGENT = _get("USER_AGENT",
                   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
-INFOCOM_RETRY = _get_int("INFOCOM_RETRY", 3)    # 학교서버 버그 F5 흉내 재시도 횟수
 
 # ── 로깅 ───────────────────────────────────────
 # 콘솔 + logs/ 에 일자별 회전 파일(자정 롤오버). sauron.sh는 redirect 없이 실행하면 됨.
@@ -167,6 +162,11 @@ DISCORD_GUILD_ID = _get("DISCORD_GUILD_ID", "")
 DEBUG_GUILD_ID = _get("DEBUG_GUILD_ID", DISCORD_GUILD_ID)
 PROD_GUILD_ID = _get("PROD_GUILD_ID", "")
 DISCORD_CHANNEL_PREFIX = _get("DISCORD_CHANNEL_PREFIX", "")  # 학과 채널명 접두(선택)
+# 종류(kind)별 채널 카테고리 이름. major는 학과의 college(단과대) 이름을 쓴다.
+#   이름을 바꾸면 setup_guild가 새 카테고리를 만들지 않고 기존 카테고리의 이름을 바꾼다(권한·위치 유지).
+# general은 구독 화면의 이름으로도 쓴다("① 홍보센터 공지" 등) — 여기 하나만 바꾸면 전부 바뀐다.
+GENERAL_CATEGORY_NAME = _get("GENERAL_CATEGORY_NAME", "홍보센터")
+ETC_CATEGORY_NAME = _get("ETC_CATEGORY_NAME", "기타")
 
 # 통합공지(mono, --dst mono 대상)·감시(디버그) 채널 — 둘 다 setup_guild가 '이름'으로
 #   자동 생성/재사용하고 그 채널ID를 DB(app_meta: mono_channel_id·debug_channel_id)에 저장한다.
@@ -179,15 +179,19 @@ DEBUG_CHANNEL_NAME = _get("DEBUG_CHANNEL_NAME", "Sauron-Debug")
 DEV_CATEGORY_NAME = _get("DEV_CATEGORY_NAME", "developers")
 DEV_ROLE_NAME = _get("DEV_ROLE_NAME", "developers")
 
-# 디버그 모드 단일 식별자. 라우팅은 config가 아니라 '실행 플래그'로만 결정(안전).
-DEBUG_EN = True
+# 디버그 서버 사용 여부. DEBUG_GUILD_ID/PROD_GUILD_ID를 둘 다 쓸 때만 의미가 있다(기본: 꺼짐).
+#   스크립트는 --debug / --prod 플래그가 이 값보다 우선한다(debug_from_argv).
+DEBUG_EN = _get_bool("DEBUG_EN", False)
 
-ICON_DEFAULT = _get("ICON_DEFAULT", "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg")
-# 비-공지(디버그·자체공지 등 '사우론의 눈' footer) 임베드용 아이콘.
-#   ICON_DEBUG_FILE 이 존재하면 그 로컬 이미지를 attachment://로 업로드해 쓴다(URL 만료 회피).
-#   없으면 ICON_DEBUG(URL)로 폴백. ⚠ Discord 첨부 CDN URL은 ex/is/hm 서명이 있어 ~24h면 만료됨.
+# 봇이 스스로 쓰는 표시 이름(디버그·자체 안내 임베드 footer).
+BOT_DISPLAY_NAME = _get("BOT_DISPLAY_NAME", "사우론의 눈")
+# 공지 임베드 footer 아이콘: 학과 행의 icon_url이 우선, 없으면 이 값(빈값 = 아이콘 없음).
+#   학교 로고 같은 배포처별 값이라 코드 기본값은 비워 둔다.
+ICON_DEFAULT = _get("ICON_DEFAULT", "")
+# 비-공지(디버그 등) 임베드 아이콘. ICON_DEBUG_FILE이 있으면 attachment://로 업로드(URL 만료 없음),
+#   없으면 ICON_DEBUG(URL), 그것도 비면 아이콘 없음.
 ICON_DEBUG_FILE = _get("ICON_DEBUG_FILE", os.path.join(_HERE, "assets", "icon_debug.png"))
-ICON_DEBUG = _get("ICON_DEBUG", "https://cdn.discordapp.com/attachments/1355611235156234473/1537041889218400296/image.png?ex=6a7d994f&is=6a7c47cf&hm=72fdd9f143fac98370855ed7ccd6d51a85a00233edf9c23f4c72a87ecc3e899f&")
+ICON_DEBUG = _get("ICON_DEBUG", "")
 
 
 def active_guild_id(debug=None):

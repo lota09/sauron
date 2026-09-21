@@ -2,16 +2,16 @@
 """
 summarize/llm.py — 요약기 (교체가능 인터페이스)
 
-Summarizer.summarize(title, content_html, ocr_text) -> (summary:str, engine:str)
+Summarizer.summarize(title, content_html, image_urls=None) -> (summary:str, engine:str)
   기본: OpenAICompatSummarizer (localhost/LAN, OpenAI 호환 /chat/completions)
   - 느슨한 텍스트 요약(엄격 JSON 강요 X), 동적 길이
   - 거절/헛소리·과소길이 감지 → SummaryError
   - E2B 실패 시 LLM_MODEL_FALLBACK(E4B)로 승격 재시도
-  - 그래도 실패 → (옵션) ClovaSummarizer 폴백
 
 무외부의존 원칙: openai 패키지 없이 requests로 직접 호출.
 """
 import json
+import logging
 import re
 import threading
 import time
@@ -19,6 +19,11 @@ import requests
 from bs4 import BeautifulSoup
 
 import config
+
+# 크롤러가 구성한 'sauron' 로거의 자식 — 핸들러를 물려받아 logs/sauron.log 로 간다.
+# LLM 호출은 실패가 잦고 외부 요인(서버 OOM·재시작)이 많아, 요청 1건마다 모델·크기·시간·결과를
+# 남긴다. 사후에 'DB엔 [conn] 뿐'인 상태로 추적 불가해지는 걸 막기 위함.
+log = logging.getLogger("sauron.llm")
 
 # 종료(에러/Ctrl-C) 시 진행 중 스트림 생성을 끊기 위한 신호(워커 스레드와 공유).
 SHUTDOWN = threading.Event()
@@ -49,7 +54,7 @@ class SummaryError(Exception):
 
 
 class EmptyContentError(SummaryError):
-    """본문+OCR 모두 비어 요약할 내용이 없음(#3). LLM 호출 안 함 → 재시도 안 함."""
+    """본문·이미지 모두 없어 요약할 내용이 없음(#3). LLM 호출 안 함 → 재시도 안 함."""
     reason = "empty"
 
 
@@ -293,36 +298,67 @@ class OpenAICompatSummarizer:
     _CONN_EXC = (requests.ConnectTimeout, requests.ReadTimeout, requests.ConnectionError,
                  requests.exceptions.ChunkedEncodingError, requests.Timeout)
 
+    def _req_shape(self, messages):
+        """요청 크기 요약(텍스트 글자수·이미지 장수·전송 KB). 서버가 큰 요청에서 죽는지 보려면 필요."""
+        content = (messages[0] or {}).get("content")
+        if isinstance(content, str):
+            return len(content), 0, len(content.encode()) // 1024
+        chars = sum(len(p.get("text", "")) for p in content if p.get("type") == "text")
+        urls = [p["image_url"]["url"] for p in content if p.get("type") == "image_url"]
+        kb = (chars + sum(len(u) for u in urls) * 3 // 4) // 1024
+        return chars, len(urls), kb
+
     def _call(self, model, messages):
         url = f"{self.base_url}/chat/completions"
         payload = self._payload(model, messages)
+        chars, nimg, kb = self._req_shape(messages)
+        log.info("[LLM 요청] model=%s 텍스트 %d자 · 이미지 %d장 · 전송 %dKB · stream=%s "
+                 "timeout(conn %ds/read %ds/wall %ds)", model, chars, nimg, kb, self.stream,
+                 self.connect_timeout, self.timeout, self.wall_timeout)
         if self.stream:
             return self._call_stream(url, payload)
+        t0 = time.time()
         try:
             r = requests.post(url, json=payload, headers=self._headers(),
                               timeout=(self.connect_timeout, self.timeout))
         except self._CONN_EXC as e:
+            log.warning("[LLM 실패] %.1fs · %s (비스트림)", time.time() - t0, type(e).__name__)
             raise ConnectionErrorLLM(f"연결 실패: {type(e).__name__}") from e
         if r.status_code != 200:
+            log.warning("[LLM 실패] %.1fs · HTTP %s · %s", time.time() - t0, r.status_code,
+                        _err_message(r)[:200])
             raise _classify_http(r.status_code, _err_message(r))   # 모델오류 vs 서버오류 분류(응답 message 노출)
         data = r.json()
         try:
-            return data["choices"][0]["message"]["content"]
+            out = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
+            log.warning("[LLM 실패] %.1fs · 응답 파싱 실패: %s", time.time() - t0, str(data)[:200])
             raise ServerError(f"응답 파싱 실패: {e} / {str(data)[:200]}")
+        log.info("[LLM 응답] %.1fs · %d자 (비스트림)", time.time() - t0, len(out or ""))
+        return out
 
     def _call_stream(self, url, payload):
         parts = []
         start = time.time()
+        first_tok = None          # 첫 토큰까지 걸린 시간(프리필 지연) — 서버 부하 판단의 핵심 지표
+        server_err = None         # 스트림 안에 실려 온 서버 오류 메시지
+        stop = "정상종료"          # 스트림이 왜 끝났는지: [DONE] / wall / shutdown / 연결끊김
         try:
             with requests.post(url, json=payload, headers=self._headers(),
                                timeout=(self.connect_timeout, self.timeout), stream=True) as r:
                 if r.status_code != 200:
+                    log.warning("[LLM 실패] %.1fs · HTTP %s · %s", time.time() - start,
+                                r.status_code, _err_message(r)[:200])
                     raise _classify_http(r.status_code, _err_message(r))
                 for line in r.iter_lines(decode_unicode=True):
                     if SHUTDOWN.is_set():                          # 종료 신호 → 즉시 스트림 중단
+                        stop = "종료신호"
                         break
                     if time.time() - start > self.wall_timeout:   # 총 벽시계 상한 → 중단(부분 보존)
+                        stop = f"벽시계상한({self.wall_timeout}s)"
+                        log.warning("[LLM 중단] 벽시계 상한 %ds 초과 → 부분 보존(%d조각). "
+                                    "LLM_WALL_TIMEOUT 상향 또는 max_tokens 하향 검토",
+                                    self.wall_timeout, len(parts))
                         break
                     if not line:
                         continue
@@ -334,16 +370,43 @@ class OpenAICompatSummarizer:
                         obj = json.loads(line)
                     except ValueError:
                         continue
+                    if obj.get("error"):              # 서버가 스트림으로 오류를 보냄(예: 이미지 디코딩 실패)
+                        e_ = obj["error"]
+                        server_err = (e_.get("message") if isinstance(e_, dict) else str(e_)) or str(e_)
+                        continue
                     ch = (obj.get("choices") or [{}])[0]
                     delta = ch.get("delta") or {}
                     tok = delta.get("content")
                     if tok:
+                        if first_tok is None:
+                            first_tok = time.time() - start
                         parts.append(tok)
         except self._CONN_EXC as e:
+            # 두 경우를 가른다(requests는 스트리밍 중 읽기 타임아웃도 ConnectionError로 감싸서 던진다):
+            #   · 읽기 시간초과 — LLM_TIMEOUT 동안 바이트가 안 옴. 첫 토큰 전이면 대개 긴 입력의 prefill이 느린 것.
+            #   · 연결 끊김     — 서버가 생성 도중 죽음(OOM 등).
+            got = sum(len(p) for p in parts)
+            ftok = f"{first_tok:.1f}s" if first_tok is not None else "없음"
+            timed_out = "Read timed out" in str(e) or isinstance(e, requests.ReadTimeout)
+            if timed_out:
+                what = (f"첫 토큰 {self.timeout}s 대기 초과" if first_tok is None
+                        else f"토큰 사이 {self.timeout}s 침묵")
+                log.warning("[LLM 시간초과] %.1fs · %s · 받은 %d자 → LLM_TIMEOUT(%ds) 초과(서버는 살아 있을 수 있음)",
+                            time.time() - start, what, got, self.timeout)
+                raise ConnectionErrorLLM(f"시간초과: {what}") from e
+            log.warning("[LLM 끊김] %.1fs · %s · 첫토큰 %s · 받은 %d자 → 서버가 연결을 끊음",
+                        time.time() - start, type(e).__name__, ftok, got)
             raise ConnectionErrorLLM(f"연결/스트림 실패: {type(e).__name__}") from e
         if not parts:
+            if server_err:
+                log.warning("[LLM 서버오류] %.1fs · %s", time.time() - start, server_err[:300])
+                raise ServerError(f"서버 오류: {server_err[:300]}")
+            log.warning("[LLM 빈응답] %.1fs · 스트림은 열렸으나 토큰 0개(%s)", time.time() - start, stop)
             raise ServerError("스트림 응답이 비어있음")   # 서버 응답O인데 생성 0 → 재시작 후보
-        return "".join(parts)
+        out = "".join(parts)
+        log.info("[LLM 응답] %.1fs · 첫토큰 %.1fs · %d자 · %s",
+                 time.time() - start, first_tok or 0.0, len(out), stop)
+        return out
 
     def ensure_model(self):
         """LLM_MODEL='auto'(또는 빈값)면 서버에 로드된 모델을 1회 조회해 확정·캐시."""
@@ -364,8 +427,17 @@ class OpenAICompatSummarizer:
             return [{"role": "user", "content": content}]
 
         def attempt(model, prompt):
-            text, _ = strip_degenerate(self._call(model, build(prompt)))  # 반복 붕괴 제거
-            return _validate(text)
+            raw = self._call(model, build(prompt))
+            text, cut = strip_degenerate(raw)                             # 반복 붕괴 제거
+            if cut:
+                log.warning("[LLM 반복붕괴] %d자 → %d자로 절단(같은 문자/토큰/줄 반복)", len(raw), len(text))
+            try:
+                return _validate(text)
+            except ValidationErrorLLM as e:
+                # 검증 실패는 '무엇이 왜'가 안 남으면 재현이 불가능하다 → 앞머리를 함께 남긴다.
+                log.warning("[LLM 검증실패] %s · 출력 %d자 :: %s", e, len(text),
+                            text[:120].replace("\n", " "))
+                raise
 
         model = self.model
         prompt = base_prompt
@@ -377,15 +449,20 @@ class OpenAICompatSummarizer:
             except ModelNotFoundError as e:
                 reasons.append(f"[model] {e}")
                 if self.fallback_model and model != self.fallback_model:
+                    log.warning("[LLM 재시도] 모델명 오류 → 폴백 모델 %s (한도 미차감)", self.fallback_model)
                     model = self.fallback_model      # 모델명 오류: 폴백 교체(한도 미차감)
                     continue
+                log.warning("[LLM 포기] 폴백 모델 없음 · 누적사유: %s", " / ".join(reasons))
                 raise SummaryError(" / ".join(reasons))
             except ConnectionErrorLLM as e:
                 reasons.append(f"[conn] {e}")
                 if retries > 0 and not SHUTDOWN.is_set():
                     retries -= 1
+                    log.warning("[LLM 재시도] 연결 실패 → %ds 대기 후 동일 요청 재시도 (남은 %d회)",
+                                config.LLM_RETRY_WAIT_SEC, retries)
                     _interruptible_sleep(config.LLM_RETRY_WAIT_SEC)  # 대기 후 같은 요청 재시도
                     continue
+                log.warning("[LLM 포기] 재시도 소진(또는 종료신호) · 누적사유: %s", " / ".join(reasons))
                 raise SummaryError(" / ".join(reasons))
             except (ValidationErrorLLM, ServerError) as e:
                 reasons.append(f"[{e.reason}] {e}")
@@ -396,37 +473,25 @@ class OpenAICompatSummarizer:
                     prompt = base_prompt + f"\n\n(한국어로만, 반복 없이 간결히){'.' * used}"
                     if self.fallback_model and model != self.fallback_model:
                         model = self.fallback_model
+                    log.warning("[LLM 재시도] %s → 프롬프트 변형 재시도 (모델 %s · 남은 %d회)",
+                                e.reason, model, retries)
                     continue
+                log.warning("[LLM 포기] 재시도 소진(또는 종료신호) · 누적사유: %s", " / ".join(reasons))
                 raise SummaryError(" / ".join(reasons))
 
-    def summarize(self, title, content_html, ocr_text=None, image_urls=None):
+    def summarize(self, title, content_html, image_urls=None):
         """요약. 텍스트 프롬프트 하나에 (있으면) 이미지를 함께 첨부해 넘긴다(비전 전용 프롬프트 X).
-        본문·OCR·이미지가 모두 없을 때만 EmptyContentError. engine은 이미지 첨부 시 'vision:<model>×N'."""
+        본문·이미지가 모두 없을 때만 EmptyContentError. engine은 이미지 첨부 시 'vision:<model>×N'."""
         self.ensure_model()
-        content_body = html_to_text(content_html)
-        has_text = bool((content_body + (ocr_text or "")).strip())
-        if not has_text and not image_urls:
-            raise EmptyContentError("본문·OCR·이미지 모두 없음")
-        body = content_body + (f"\n\n[이미지 OCR (오탈자 가능)]\n{ocr_text}" if ocr_text else "")
+        body = html_to_text(content_html)
+        if not body.strip() and not image_urls:
+            raise EmptyContentError("본문·이미지 모두 없음")
         base = self._compose_prompt(title, body)
         if image_urls:
             base += config.LLM_VISION_HINT      # 이미지 있을 때만 '포스터를 읽어라' 지시 추가
         text, model = self._generate(base, image_urls=image_urls or None)
         engine = f"vision:{model}×{len(image_urls)}" if image_urls else model
         return text, engine
-
-
-class ClovaSummarizer:
-    """요약 실패건 한정 외부 폴백. 자격증명 없으면 사용 불가."""
-
-    def __init__(self):
-        self.enabled = config.CLOVA_ENABLE
-
-    def summarize(self, title, content_html, ocr_text=None):
-        if not self.enabled:
-            raise SummaryError("Clova 비활성화")
-        # TODO: sauron ClovaSummary.py 이식(자격증명·엔드포인트). 현재는 자리만.
-        raise SummaryError("Clova 미구현(자리만 확보)")
 
 
 def default_summarizer():

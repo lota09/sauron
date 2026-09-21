@@ -93,7 +93,7 @@ sauron이 이미 도달한 정답을 계승한다. (`Overview.py` + `Update.py`)
 ```
 
 - **판별 키 = URL** (게시물 고유). 제목·게시위치가 아니다 → **고정공지(핀)·순서 꼬임·마감 재정렬을 자동 흡수.** → **BOLD/핀 판별 로직 불필요(폐기).**
-- **UPDATE_LIMIT 가드(계승):** 한 학과에서 신규가 임계치(기본 5, 설정값) 초과면 = 사이트 구조 변경으로 전부 "신규"로 보이는 상황일 확률 ↑ → **대량 알림 차단 + 감시채널 경보.**
+- **UPDATE_LIMIT 가드(계승):** 한 학과에서 신규가 임계치(기본 10, 설정값) 초과면 = 사이트 구조 변경으로 전부 "신규"로 보이는 상황일 확률 ↑ → **대량 알림 차단 + 감시채널 경보.**
 - **시딩(최초 1회, 우려1 해소):** 학과가 미시딩(`depts.seeded_at` NULL)이면 → 목록 **최대 3페이지의 (제목·URL)만** 긁어 `notices`에 **`status='seeded'`로 전량 등록(무발송·무요약)**. 이후부터 진짜 신규만 정상 처리. (최초 전량 fetch+요약이라는 고비용 회피)
   - 시딩과 UPDATE_LIMIT은 함께 동작: 시딩된 학과는 첫 정상런에서 신규가 소수여야 정상.
 - 단일 `notices` 테이블의 `seeded` 행이 sauron의 `buffers/last-*.txt`를 대체(파일 → DB). 제목까지 기억하므로 시딩 공지도 `query` 검색 가능.
@@ -126,6 +126,8 @@ sauron이 60개로 못 간 이유: **사이트마다 파이썬 클래스/모델�
 ---
 
 ## 6. OCR (이미지 공지 ~1/4)
+
+> **2026-09-22 폐기.** 이미지는 비전 LLM에 직접 첨부한다([vision_llm_experiment.md](vision_llm_experiment.md)). OCR 엔진(Tesseract·Paddle)과 Clova 폴백 요약은 실사용·검증 없이 유지비만 들어 코드에서 제거했다(git 히스토리에 남음). 아래는 당시 설계 기록.
 
 - **트리거:** 상세 본문에 이미지가 있을 때만(ICT 방식). 없으면 바로 요약.
 - **엔진:** Tesseract(kor)·PaddleOCR **둘 다 실측 벤치** 후 결정. RAM상 **온디맨드 로드 → OCR → 해제**(상주 금지).
@@ -244,7 +246,7 @@ sauron_reborn/
 │   └─ store.py              ← SQLite 접근 계층(depts/notices/subs)
 ├─ crawl/
 │   ├─ scheduler.py          ← APScheduler 10분 트리거
-│   ├─ fetcher.py            ← 제네릭 CSS 크롤 + fetch_type 예외(+infocom 재시도)
+│   ├─ fetcher.py            ← 수집 방식 2개(html·json_api) + fetch_config 범용 옵션
 │   └─ diff.py               ← 차집합 + 시딩 + UPDATE_LIMIT
 ├─ summarize/
 │   ├─ worker.py             ← asyncio 큐 소비 + Semaphore(1)
@@ -291,7 +293,7 @@ sauron_reborn/
 - [x] SQLite (Postgres·Redis 불사용)
 - [x] 인터럽트 = 인프로세스 asyncio.Queue + Semaphore(1)
 - [x] 신규감지 = URL 차집합, BOLD/핀 판별 폐기, UPDATE_LIMIT 가드, 3페이지 시딩
-- [x] 크롤 = DB 저장 CSS 셀렉터 제네릭 + fetch_type 예외 (autoscraper 폐기)
+- [x] 크롤 = DB 저장 CSS 셀렉터 제네릭 + fetch_config 범용 옵션 (사이트 전용 분기 없음, autoscraper 폐기)
 - [x] 학과 정의 DeptInfo→DB(`depts`)
 - [x] 요약 = 폰 Gemma E2B→E4B→(포기|Clova), JSON 완화, 동적 길이
 - [x] OCR = 이미지 있을 때만, Tesseract/Paddle 온디맨드, 실패시 알림만

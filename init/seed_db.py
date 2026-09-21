@@ -15,10 +15,11 @@ init/seed_db.py  —  DB 초기화 + 학과 시드 (idempotent)
 
 개발=Windows x86, 타겟=ARM(chroot/proot). 표준 라이브러리만 사용.
 """
-import argparse, csv, os, sqlite3, sys
+import argparse, csv, json, os, re, sqlite3, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+sys.path.insert(0, ROOT)
 SCHEMA = os.path.join(ROOT, "db", "schema.sql")
 
 # 시드에서 갱신할 설정 컬럼(채널/역할/active/seeded_at 제외)
@@ -45,6 +46,66 @@ def _coerce(col, v):
     return v  # NOT NULL 텍스트(url_prefix 등)는 '' 그대로 유지
 
 
+FETCH_TYPES = {"html", "json_api"}          # 내장 수집 방식. 그 외 이름 = plugins/<이름>.py 수집 플러그인
+JSON_API_REQUIRED = ("list_url", "list_path", "id_key", "title_key", "url_template")
+KINDS = {"general", "major", "etc"}
+
+
+def validate(rows):
+    """CSV를 DB에 넣기 전에 검사. 틀린 행을 전부 모아 한 번에 보고한다(크롤 중에 터지지 않게).
+    다른 학교가 depts_seed.csv만 채우고 deploy.py를 돌렸을 때, 여기서 걸러져야 한다."""
+    errs, seen = [], set()
+    for n, r in enumerate(rows, start=2):                     # 2 = 헤더 다음 줄
+        did = (r.get("dept_id") or "").strip()
+        where = f"{n}행({did or '?'})"
+        if not did:
+            errs.append(f"{where}: dept_id 비어 있음"); continue
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+", did):
+            errs.append(f"{where}: dept_id는 영문·숫자·_- 만 (지금: {did!r})")
+        if did in seen:
+            errs.append(f"{where}: dept_id 중복")
+        seen.add(did)
+        if not (r.get("name_ko") or "").strip():
+            errs.append(f"{where}: name_ko 비어 있음")
+        if (r.get("kind") or "major") not in KINDS:
+            errs.append(f"{where}: kind는 {sorted(KINDS)} 중 하나 (지금: {r.get('kind')!r})")
+        ft = (r.get("fetch_type") or "html").strip()
+        if ft not in FETCH_TYPES:
+            from core import plugin              # 내장이 아니면 수집 플러그인이어야 한다
+            if not plugin.exists(ft):
+                errs.append(f"{where}: fetch_type {ft!r} — 내장({sorted(FETCH_TYPES)})도 아니고 plugins/{ft}.py 도 없음")
+            else:
+                try:
+                    miss = plugin.missing_secrets(ft, plugin.load_class(ft, "source"))
+                    if miss:
+                        errs.append(f"{where}: secrets/plugin_{ft}.json 에 {', '.join(miss)} 필요 "
+                                    f"(`python3 deploy.py`가 물어서 채움)")
+                except Exception as e:
+                    errs.append(f"{where}: plugins/{ft}.py 불러오기 실패: {type(e).__name__}: {e}")
+        cfg = {}
+        if (r.get("fetch_config") or "").strip():
+            try:
+                cfg = json.loads(r["fetch_config"])
+                if not isinstance(cfg, dict):
+                    raise ValueError("객체({...})가 아님")
+            except ValueError as e:
+                errs.append(f"{where}: fetch_config JSON 오류: {e}")
+        if ft == "html":
+            if not (r.get("link_selector") or "").strip():
+                errs.append(f"{where}: html은 link_selector 필수")
+            if not (r.get("list_url") or "").startswith(("http://", "https://")):
+                errs.append(f"{where}: list_url이 http(s) 주소가 아님")
+            if cfg.get("link_attr") and not cfg.get("url_template"):
+                errs.append(f"{where}: link_attr를 쓰면 url_template도 필요")
+        elif ft == "json_api":
+            miss = [k for k in JSON_API_REQUIRED if k not in cfg]
+            if miss:
+                errs.append(f"{where}: json_api fetch_config에 {miss} 필요")
+            if not (cfg.get("content_key") or cfg.get("detail_path")):
+                errs.append(f"{where}: json_api는 content_key(목록에 본문) 또는 detail_path(상세 JSON) 중 하나 필요")
+    return errs
+
+
 def seed(db_path: str, seed_path: str) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
     con = sqlite3.connect(db_path)
@@ -61,6 +122,13 @@ def seed(db_path: str, seed_path: str) -> None:
 
     with open(seed_path, encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
+    errs = validate(rows)
+    if errs:
+        con.close()
+        print(f"[seed_db] ✗ {seed_path} 에 문제 {len(errs)}건 — DB는 건드리지 않았습니다:")
+        for e in errs:
+            print(f"    - {e}")
+        sys.exit(1)
 
     set_clause = ", ".join(f"{c}=excluded.{c}" for c in CONFIG_COLS)
     sql = f"""
@@ -109,7 +177,7 @@ def main():
     ap.add_argument("--seed", default=os.path.join(HERE, "depts_seed.csv"))
     a = ap.parse_args()
     if not os.path.exists(a.seed):
-        sys.exit(f"seed csv not found: {a.seed} (먼저 generate_seed.py 실행)")
+        sys.exit(f"seed csv not found: {a.seed} (학교 사이트 목록을 이 CSV로 작성 — README '새 학교에 도입')")
     seed(a.db, a.seed)
 
 

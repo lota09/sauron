@@ -25,6 +25,7 @@ import json
 import os
 import re
 import sys
+import traceback
 
 import config
 from db.store import Store
@@ -34,7 +35,7 @@ try:
 except ImportError:
     discord = None
 
-DRY = "--dry" in sys.argv[1:]
+DRY = "--dry" in sys.argv[1:] and "--check" not in sys.argv[1:]
 
 
 def _norm_ch(name):
@@ -56,6 +57,46 @@ def _role_name(d):
 def _token():
     with open(config.DISCORD_TOKEN_FILE, encoding="utf-8") as f:
         return json.load(f)["bot_token"]
+
+
+def _category_name(d):
+    """학과가 들어갈 카테고리 이름. college가 아니라 kind로 정한다(college 컬럼은 '단과대'로 순수 유지)."""
+    kind = d.get("kind") or "major"
+    if kind == "general":
+        return config.GENERAL_CATEGORY_NAME
+    if kind == "etc":
+        return config.ETC_CATEGORY_NAME
+    return (d.get("college") or "").strip() or config.ETC_CATEGORY_NAME
+
+
+async def _rename_categories(depts, all_channels, find, cache):
+    """설정에서 카테고리 이름을 바꿨을 때, 새로 만들지 않고 기존 카테고리의 이름을 바꾼다(권한·위치 유지).
+    '기존 카테고리' = 그 종류 학과 채널들이 지금 가장 많이 들어 있는 카테고리.
+    원하는 이름이 이미 있으면 아무것도 안 한다 → 두 번째 실행부터는 no-op(멱등).
+    DB에 카테고리 ID를 따로 두지 않고 길드의 실제 상태로 판단한다(이 파일의 원칙과 같음)."""
+    cats = {c.id: c for c in all_channels if isinstance(c, discord.CategoryChannel)}
+    names = {c.name for c in cats.values()}
+    for kind, want in (("general", config.GENERAL_CATEGORY_NAME), ("etc", config.ETC_CATEGORY_NAME)):
+        if want in names:
+            continue
+        count = {}
+        for d in depts:
+            if (d.get("kind") or "major") != kind:
+                continue
+            ch = find(config.DISCORD_CHANNEL_PREFIX + (d.get("name_ko") or d["dept_id"]))
+            cid = getattr(ch, "category_id", None)
+            if cid in cats:
+                count[cid] = count.get(cid, 0) + 1
+        if not count:
+            continue                                   # 채널이 아직 없음 → 생성 단계가 새 이름으로 만든다
+        cid = max(count, key=count.get)
+        old = cats[cid]
+        print(f"[카테고리 이름 변경] {old.name} → {want} (그 안의 {kind} 채널 {count[cid]}개 기준)"
+              + (" (dry)" if DRY else ""))
+        if not DRY:
+            old = await old.edit(name=want, reason="sauron 카테고리 이름 설정 변경") or old
+        cache[want] = old                              # 바로 뒤 _ensure_category가 새로 만들지 않게
+        names.add(want)
 
 
 async def _ensure_category(guild, name, cache):
@@ -113,10 +154,15 @@ async def _sync_perms(ch, managed, cat=_KEEP):
     return False
 
 
+# setup_guild가 app_meta에 남겨야 하는 키 — 끝에서 '진짜 저장됐는지' 되읽어 확인한다.
+META_KEYS = ("developers_role_id", "mono_channel_id", "debug_channel_id")
+
+
 async def run(gid):
     store = Store(config.DB_PATH)
     intents = discord.Intents.default()
     client = discord.Client(intents=intents)
+    result = {"ok": False}          # on_ready 안의 성패를 바깥(main)으로 전달
 
     @client.event
     async def on_ready():
@@ -136,17 +182,11 @@ async def run(gid):
             me = guild.me or guild.get_member(client.user.id)     # 봇 멤버(전송 허용 overwrite용)
             depts = store.active_depts()
             cat_cache = {}
+            await _rename_categories(depts, all_channels, _find, cat_cache)
             created_r = created_c = reused_r = synced_c = 0   # synced_c: 이미 있어 소급 처리한 채널(갱신+유지 통합)
             for d in depts:
                 did, name = d["dept_id"], (d.get("name_ko") or d["dept_id"])
-                # 카테고리는 college가 아니라 kind로 결정(college 컬럼은 '단과대'로 순수 유지).
-                kind = d.get("kind") or "major"
-                if kind == "general":
-                    college = "공통 공지"
-                elif kind == "etc":
-                    college = "기타"
-                else:
-                    college = (d.get("college") or "").strip() or "기타"
+                college = _category_name(d)
 
                 # ── 역할: name_ko에서 단과대 뗀 이름으로 존재 확인 → 없으면 생성, 있으면 재사용 ──
                 rname = _role_name(d)      # 예: 'IT대학 AI융합학부' → 'AI융합학부'
@@ -179,7 +219,12 @@ async def run(gid):
                 elif DRY:
                     # dry는 역할을 실제로 안 만들어 ow가 None일 수 있음 → 존재 사실만 보고(권한 소급은 실행 때).
                     synced_c += 1
-                    print(f"[채널 존재·소급예정(dry)] {college} / {ch.name}")
+                    cur = next((c.name for c in all_channels if c.id == getattr(ch, "category_id", None)), None)
+                    target = cat_cache[college].name if college in cat_cache else college
+                    if cur != target:
+                        print(f"[채널 이동(dry)] {cur} → {target} / {ch.name}")
+                    else:
+                        print(f"[채널 존재·소급예정(dry)] {college} / {ch.name}")
                 elif ow:
                     cat = await _ensure_category(guild, college, cat_cache)
                     synced_c += 1
@@ -244,15 +289,42 @@ async def run(gid):
                   + f" / 채널 생성 {created_c}·기존 {synced_c}"
                   + f" / 통합채널 {'준비됨' if mono else '-'} / 감시채널 {'준비됨' if dbg else '-'}"
                   + (" (dry-run: 실제 생성 없음)" if DRY else ""))
-        except Exception as e:
-            print(f"[오류] {e}")
+            # 위 '준비됨'은 디스코드 객체를 잡았다는 뜻일 뿐 DB에 들어갔다는 뜻이 아니다.
+            # 런타임이 실제로 읽는 값을 되읽어 그대로 보여주고, 빠진 게 있으면 실패로 끝낸다.
+            #   (과거에 mono/debug 키가 비어 디버그가 통째로 안 나가는데도 아무도 몰랐다.)
+            result["ok"] = _verify_meta(store)
+        except Exception:
+            traceback.print_exc()          # 사유만이 아니라 어디서 끊겼는지까지 남긴다
+            result["ok"] = False
         finally:
             await client.close()
 
     await client.start(_token())
+    return result["ok"]
+
+
+def _verify_meta(store):
+    """app_meta를 되읽어 저장 결과를 출력. 전부 있으면 True."""
+    if DRY:
+        print("[검증 생략] dry-run — DB에 쓰지 않았습니다")
+        return True
+    vals = {k: store.get_meta(k) for k in META_KEYS}
+    for k, v in vals.items():
+        print(f"[app_meta] {k} = {v or '없음 ← 저장 안 됨'}")
+    missing = [k for k, v in vals.items() if not v]
+    if missing:
+        print(f"[실패] app_meta에 저장되지 않은 키: {', '.join(missing)}")
+        return False
+    print("[검증 OK] 런타임(main)이 읽을 값이 모두 저장됨 "
+          "— 크롤러가 이미 떠 있다면 재시작해야 반영됩니다(시작 시 1회만 읽음)")
+    return True
 
 
 def main():
+    # --check: 디스코드에 붙지 않고 'DB가 동기화돼 있나'만 본다. 길드에 채널이 다 있어도
+    #   app_meta가 비어 있을 수 있으므로(그러면 런타임이 감시채널을 못 찾는다) 따로 확인이 필요하다.
+    if "--check" in sys.argv[1:]:
+        raise SystemExit(0 if _verify_meta(Store(config.DB_PATH)) else 1)
     if discord is None:
         raise SystemExit("discord.py 미설치: pip install -U discord.py")
     debug = config.debug_from_argv(sys.argv)
@@ -260,7 +332,8 @@ def main():
     if not gid:
         raise SystemExit("대상 길드 ID 없음: DEBUG_GUILD_ID/PROD_GUILD_ID 확인 (또는 --debug/--prod)")
     print(f"[setup] {'디버깅' if debug else '실서비스'} 서버({gid})" + (" [dry]" if DRY else ""))
-    asyncio.run(run(gid))
+    if not asyncio.run(run(gid)):
+        raise SystemExit(1)      # 반쯤 끝난 실행이 성공(exit 0)으로 보이지 않게 한다
 
 
 if __name__ == "__main__":
