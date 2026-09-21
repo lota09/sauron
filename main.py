@@ -34,8 +34,7 @@ from crawl.fetcher import Fetcher
 from db.store import Store
 from notify.notifier import Notifier
 from pipeline import Components, crawl_pass, run_once
-from summarize.llm import default_summarizer, ClovaSummarizer
-from summarize.ocr import get_ocr
+from summarize.llm import default_summarizer
 from summarize.worker import worker_loop
 
 
@@ -62,11 +61,9 @@ def build_components(logger=None, dst="null", nosummary=False):
     return Components(
         store=store,
         fetcher=Fetcher(),
-        ocr=get_ocr(),
         summarizer=summarizer,
         notifier=notifier,
         queue=WorkQueue(),
-        clova=ClovaSummarizer(),
         logger=logger,
         nosummary=nosummary,
     )

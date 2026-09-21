@@ -8,7 +8,7 @@ _확장(나중에 할 것: API·RSS·AI에이전트봇) 평가는 [`ROADMAP.md`]
 ## ✅ 완료 (built & 오프라인 검증)
 
 **코어 파이프라인**
-- 설정주도 크롤러: 학과별 CSS 셀렉터 + fetch_type 예외(json_ssfilm/mediamba·post_lawyer·onclick_media·dom_materials). 64개 학과 시드.
+- 설정주도 크롤러: 수집 방식 2개(html·json_api) + fetch_config 범용 옵션. 사이트 전용 코드 없음(2026-09-22 제거).
 - URL 차집합 신규감지 + 최초 시딩(무발송) + UPDATE_LIMIT 대량알림 가드.
 - 단일 asyncio: 크롤 → 감지 → D1 즉시발송(제목+링크) → 요약큐 → D2 요약 edit.
 - SQLite WAL. schema v4: `seen_notices`를 `notices`로 **단일 테이블화**(status: seeded→detected→notified→done/…). 시딩이 제목까지 기억 → query 검색 가능.

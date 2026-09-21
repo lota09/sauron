@@ -27,8 +27,10 @@ def _scrape_pages(fetcher, dept, pages: int):
     """1..pages 페이지를 긁어 순서 보존 병합(중복 url 제거)."""
     seen_url = set()
     merged = []
-    has_template = "{{page}}" in (dept.get("list_url") or "")
-    n = pages if has_template else 1
+    # 여러 페이지를 긁을 수 있는가는 수집기가 판단(html: list_url의 {{page}}, 플러그인: PAGINATED).
+    paginated = getattr(fetcher, "paginated", None)
+    multi = paginated(dept) if paginated else "{{page}}" in (dept.get("list_url") or "")
+    n = pages if multi else 1
     for p in range(1, n + 1):
         items = fetcher.scrape_list(dept, page=p)
         for it in items:

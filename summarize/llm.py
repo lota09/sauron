@@ -2,12 +2,11 @@
 """
 summarize/llm.py — 요약기 (교체가능 인터페이스)
 
-Summarizer.summarize(title, content_html, ocr_text) -> (summary:str, engine:str)
+Summarizer.summarize(title, content_html, image_urls=None) -> (summary:str, engine:str)
   기본: OpenAICompatSummarizer (localhost/LAN, OpenAI 호환 /chat/completions)
   - 느슨한 텍스트 요약(엄격 JSON 강요 X), 동적 길이
   - 거절/헛소리·과소길이 감지 → SummaryError
   - E2B 실패 시 LLM_MODEL_FALLBACK(E4B)로 승격 재시도
-  - 그래도 실패 → (옵션) ClovaSummarizer 폴백
 
 무외부의존 원칙: openai 패키지 없이 requests로 직접 호출.
 """
@@ -55,7 +54,7 @@ class SummaryError(Exception):
 
 
 class EmptyContentError(SummaryError):
-    """본문+OCR 모두 비어 요약할 내용이 없음(#3). LLM 호출 안 함 → 재시도 안 함."""
+    """본문·이미지 모두 없어 요약할 내용이 없음(#3). LLM 호출 안 함 → 재시도 안 함."""
     reason = "empty"
 
 
@@ -464,34 +463,19 @@ class OpenAICompatSummarizer:
                 log.warning("[LLM 포기] 재시도 소진(또는 종료신호) · 누적사유: %s", " / ".join(reasons))
                 raise SummaryError(" / ".join(reasons))
 
-    def summarize(self, title, content_html, ocr_text=None, image_urls=None):
+    def summarize(self, title, content_html, image_urls=None):
         """요약. 텍스트 프롬프트 하나에 (있으면) 이미지를 함께 첨부해 넘긴다(비전 전용 프롬프트 X).
-        본문·OCR·이미지가 모두 없을 때만 EmptyContentError. engine은 이미지 첨부 시 'vision:<model>×N'."""
+        본문·이미지가 모두 없을 때만 EmptyContentError. engine은 이미지 첨부 시 'vision:<model>×N'."""
         self.ensure_model()
-        content_body = html_to_text(content_html)
-        has_text = bool((content_body + (ocr_text or "")).strip())
-        if not has_text and not image_urls:
-            raise EmptyContentError("본문·OCR·이미지 모두 없음")
-        body = content_body + (f"\n\n[이미지 OCR (오탈자 가능)]\n{ocr_text}" if ocr_text else "")
+        body = html_to_text(content_html)
+        if not body.strip() and not image_urls:
+            raise EmptyContentError("본문·이미지 모두 없음")
         base = self._compose_prompt(title, body)
         if image_urls:
             base += config.LLM_VISION_HINT      # 이미지 있을 때만 '포스터를 읽어라' 지시 추가
         text, model = self._generate(base, image_urls=image_urls or None)
         engine = f"vision:{model}×{len(image_urls)}" if image_urls else model
         return text, engine
-
-
-class ClovaSummarizer:
-    """요약 실패건 한정 외부 폴백. 자격증명 없으면 사용 불가."""
-
-    def __init__(self):
-        self.enabled = config.CLOVA_ENABLE
-
-    def summarize(self, title, content_html, ocr_text=None):
-        if not self.enabled:
-            raise SummaryError("Clova 비활성화")
-        # TODO: sauron ClovaSummary.py 이식(자격증명·엔드포인트). 현재는 자리만.
-        raise SummaryError("Clova 미구현(자리만 확보)")
 
 
 def default_summarizer():

@@ -10,11 +10,11 @@ PRAGMA foreign_keys = ON;
 -- 학과 추가/수정 = 코드 배포 없이 이 테이블 행 편집
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS depts (
-  dept_id            TEXT PRIMARY KEY,      -- 안정 슬러그. 예: 'cse', 'eco', 'scatch_haksa'
+  dept_id            TEXT PRIMARY KEY,      -- 안정 슬러그. 예: 'cse', 'eco', 'notice_haksa'
   name_ko            TEXT NOT NULL,         -- 학과/카테고리 표시명
   kind               TEXT NOT NULL DEFAULT 'major',
                      -- 구독 분류(봇 3단계 기준). 'general'(전교공통) | 'major'(전공) | 'etc'(기타)
-                     --  general = scatch 포털 공통(학사·장학 등), major = 단과대 소속 학과, etc = 그 외
+                     --  general = 전교 공통(학사·장학 등), major = 단과대 소속 학과, etc = 그 외
   college            TEXT,                  -- 단과대
   department         TEXT,                  -- 학부
   major              TEXT,                  -- 전공(있으면)
@@ -23,23 +23,26 @@ CREATE TABLE IF NOT EXISTS depts (
   content_selector   TEXT,                  -- 상세 본문 CSS
   url_prefix         TEXT NOT NULL DEFAULT '', -- 상대링크 접두(도메인 등)
   fetch_type         TEXT NOT NULL DEFAULT 'html',
-                     -- 'html'(제네릭 CSS) | 'json_ssfilm' | 'json_mediamba'
-                     -- | 'onclick_media' | 'post_lawyer' | 'dom_materials'
-                     -- | 'json_api'(JS프론트 사이트의 JSON API — 상세는 fetch_config)
-                     -- | 'login_*'(향후 ssupath 등, 현재 미사용)
+                     -- 수집 '방식'만 존재(사이트 이름 금지). 사이트 차이는 전부 설정으로:
+                     -- 'html'(CSS 셀렉터) | 'json_api'(JS로 그리는 사이트의 JSON API)
+                     -- | 'login_*'(향후, 로그인 필요 사이트 — 코어 밖 별도 모듈)
   fetch_config       TEXT,                  -- json_api 등 확장 파서용 JSON 설정
-                     -- html: (선택) 링크 조립 — href 대신 다른 속성에서 키를 꺼내 URL을 만든다
+                     -- html 선택 옵션(crawl/fetcher.py 머리말에 전체 목록):
+                     --   링크 조립 — href 대신 다른 속성에서 키를 꺼내 URL을 만든다
                      --   {"link_attr":"data-params","url_template":"view.do?seq={seq}"}  (속성값 JSON)
                      --   {"link_attr":"onclick","link_regex":"fnView\\('(?P<id>\\d+)'\\)","url_template":"...{id}"}
-                     --   NULL이면 href 그대로(기존 html 사이트 전부)
+                     --   제목 영역 {"title_selector":".tit strong","title_exclude":"span"}
+                     --   에러페이지 재시도 {"error_page_retry":3}
+                     --   NULL이면 기본 동작(href·링크 텍스트·재시도 없음)
                      -- json_api 키: list_url({page})·list_path·id_key·title_key·url_template
+                     --   ·content_key 또는 detail_path(공지 URL이 주는 JSON에서 본문 경로)
                      --   ·content_key·content_format(html|lexical|plain)·page_base·headers
   login              INTEGER NOT NULL DEFAULT 0,  -- 인증 필요 여부(향후). 0=공개
   seed_pages         INTEGER NOT NULL DEFAULT 3,  -- 최초 시딩 시 훑을 페이지 수
   discord_channel_id TEXT,                  -- 학과 전용 채널(없으면 NULL→자동생성 단계에서 채움)
   discord_role_id    TEXT,                  -- 학과 역할(구독=역할 보유)
   icon_url           TEXT,                  -- 임베드 footer 아이콘
-  active             INTEGER NOT NULL DEFAULT 1,  -- 0=크롤 제외(예: infocom 문제 시 임시 off)
+  active             INTEGER NOT NULL DEFAULT 1,  -- 0=크롤 제외(예: 사이트 장애 시 임시 off)
   seeded_at          TEXT,                  -- NULL=미시딩. 시딩 완료 시각 기록
   note               TEXT                   -- 운영 메모(예: '학교 서버 버그 재시도 대상')
 );

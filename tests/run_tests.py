@@ -18,14 +18,12 @@ sys.path.insert(0, ROOT)
 FIX = os.path.join(ROOT, "tests", "fixtures")
 
 import config
-config.OCR_BACKEND = "none"    # (전송은 토큰 없음 → 자동 dry)
 config.UPDATE_LIMIT = 5
 
 from db.store import Store
 from crawl.fetcher import Fetcher
 from crawl.diff import detect_new, FetchEmpty, TooManyNew
 from summarize.llm import OpenAICompatSummarizer, SummaryError
-from summarize.ocr import get_ocr
 from notify.notifier import Notifier
 from core.queue import WorkQueue
 from pipeline import Components, crawl_pass, run_once
@@ -289,6 +287,259 @@ def test_html_link_template():
     check("템플릿 키 불일치 → 예외(전건 누락 방지)", raised, "")
 
 
+def test_generic_options():
+    print("[test] 범용 옵션(title_selector·title_exclude·error_page_retry·json_api detail_path·모르는 fetch_type)")
+    f = Fetcher()
+    # 카드 전체를 감싼 링크: 날짜·뱃지·미리보기가 링크 텍스트에 섞이는 구조(신소재공학과 실물 근사)
+    card = ("""<div class="news-list"><ul><li><a href="/bbs/view?num=574"><div class="date_box"><p>19</p></div>"""
+            """<div class="tit_box"><strong><span class="tag01">공지</span>진로지도교수 상담 신청</strong></div>"""
+            """<p>미리보기 본문이 길게 이어진다</p></a></li></ul></div>""")
+    calls = {"n": 0}
+
+    class Resp:
+        def __init__(self, t): self.content = t.encode(); self.text = t
+        def raise_for_status(self): pass
+
+    def fake_get(url, retry_on_error_page=0):
+        return Resp(card)
+    f._get = fake_get
+    d = {"dept_id": "m", "fetch_type": "html", "url_prefix": "", "list_url": "https://m.x/bbs/list",
+         "link_selector": ".news-list ul li > a"}
+    raw = f.scrape_list(d, 1)[0]["title"]
+    check("옵션 없으면 링크 전체 텍스트(날짜·뱃지·미리보기 섞임)", "19" in raw and "미리보기" in raw, raw)
+    it = f.scrape_list({**d, "fetch_config": json.dumps({"title_selector": ".tit_box strong",
+                                                         "title_exclude": "span"})}, 1)[0]
+    check("title_selector+exclude → 제목만", it["title"] == "진로지도교수 상담 신청", it["title"])
+    check("URL은 그대로 href", it["url"] == "https://m.x/bbs/view?num=574", it["url"])
+
+    # 에러페이지 재시도: 설정 없으면 1회, error_page_retry=3이면 3회까지
+    f2 = Fetcher()
+    seq = ["Uncaught PDOException", "Uncaught PDOException", "<div>정상</div>"]
+
+    class R2:
+        def __init__(self, t): self.text = t; self.content = t.encode()
+        def raise_for_status(self): pass
+    def sess_get(url, **kw):
+        calls["n"] += 1
+        return R2(seq[min(calls["n"] - 1, 2)])
+    f2.session.get = sess_get
+    calls["n"] = 0; f2._get("http://x", retry_on_error_page=0)
+    check("재시도 설정 없음 → 1회 요청", calls["n"] == 1, calls["n"])
+    calls["n"] = 0; r = f2._get("http://x", retry_on_error_page=3)
+    check("error_page_retry=3 → 정상 페이지까지 재시도", calls["n"] == 3 and "정상" in r.text, calls["n"])
+
+    # json_api detail_path: 목록엔 본문이 없고 공지 URL이 상세 JSON을 준다
+    f3 = Fetcher()
+    def get_json(url, headers=None):
+        if "list" in url:
+            return {"data_list": [{"NoticeIndex": 7, "Title": "영화 공지"}]}
+        return {"data_modify": {"Content": "<p>상세 본문</p><img src='/a.png'>"}}
+    f3._get_json = get_json
+    dj = {"dept_id": "j", "fetch_type": "json_api", "list_url": "http://j.x/",
+          "fetch_config": json.dumps({"list_url": "http://j.x/list", "list_path": "data_list",
+                                      "id_key": "NoticeIndex", "title_key": "Title",
+                                      "url_template": "http://j.x/view?NoticeIndex={id}",
+                                      "detail_path": "data_modify.Content", "content_format": "html"})}
+    items = f3.scrape_list(dj, 1)
+    check("json_api 목록", items == [{"title": "영화 공지", "url": "http://j.x/view?NoticeIndex=7"}], str(items))
+    c = f3.fetch_content(dj, items[0]["url"])
+    check("detail_path → 공지 URL의 JSON에서 본문", "상세 본문" in c["content"] and len(c["images"]) == 1, str(c)[:120])
+
+    # 사이트 이름 붙은 옛 fetch_type은 조용히 html로 떨어지지 않고 실패
+    for ft in ("json_ssfilm", "dom_materials"):
+        try:
+            Fetcher().scrape_list({**d, "fetch_type": ft}, 1); raised = False
+        except Exception:
+            raised = True
+        check(f"모르는 fetch_type '{ft}' → 실패", raised, "")
+
+
+def test_crawl_health():
+    print("[test] 수집 실패 알림 — 상태 변화만(시작·원인변경·지속 리마인드·복구) + 예외 서식")
+    import time as _t
+    from core.crawl_health import CrawlHealth
+    from core.errors import describe
+    store, path = temp_store([DEPT])
+    sent, logs = [], []
+
+    class N:
+        def debug(self, text): sent.append(text)
+
+    def boom_net():
+        try:
+            raise ConnectionError("connection refused")
+        except Exception as e:
+            raise RuntimeError("scrape_list 실패(t p1)") from e
+
+    def boom_key():
+        try:
+            {}["encSddpbSeq"]
+        except Exception as e:
+            raise RuntimeError("scrape_list 실패(t p1)") from e
+
+    def err(fn):
+        try:
+            fn()
+        except Exception as e:
+            return e
+
+    h = CrawlHealth(store, N(), logs.append, remind_sec=3600)
+    for _ in range(3):
+        h.failed("t", "테스트학과(t)", err(boom_net))
+    check("같은 원인 3회 → 알림 1통", len(sent) == 1 and "크롤 실패" in sent[0], str(sent))
+    check("알림에 원인 타입·우리 코드 위치", "원인: ConnectionError" in sent[0] and "@ tests/run_tests.py" in sent[0], sent[0])
+    h.failed("t", "테스트학과(t)", err(boom_key))
+    check("원인 바뀜 → 알림", len(sent) == 2 and "원인 바뀜" in sent[1] and "KeyError" in sent[1], str(sent[-1:]))
+
+    h2 = CrawlHealth(store, N(), logs.append, remind_sec=3600)      # 크롤러 재시작
+    h2.failed("t", "테스트학과(t)", err(boom_key))
+    check("재시작 후에도 상태 이어짐(재알림 없음)", len(sent) == 2, str(len(sent)))
+    st = h2.failing()["t"]
+    check("누적 횟수 보존", st["count"] == 5, str(st))
+
+    st["last_alert"] = _t.time() - 4000                              # 리마인드 간격 경과
+    store.set_meta("crawl_fail:t", json.dumps(st))
+    h2.failed("t", "테스트학과(t)", err(boom_key))
+    check("간격 지나면 '여전히 실패' 1통", len(sent) == 3 and "여전히" in sent[2], str(sent[-1:]))
+
+    h2.ok("t", "테스트학과(t)")
+    check("복구 → 알림 + 상태 삭제", len(sent) == 4 and "복구" in sent[3] and not h2.failing(), str(sent[-1:]))
+    h2.ok("t", "테스트학과(t)")
+    check("정상 반복은 조용", len(sent) == 4, str(len(sent)))
+    h2.failed("t", "테스트학과(t)", err(boom_net))
+    check("복구 후 다시 실패 → 새로 알림", len(sent) == 5 and "크롤 실패" in sent[4], str(sent[-1:]))
+    check("describe: 감싼 예외 → 원인까지", "원인: KeyError" in describe(err(boom_key)), describe(err(boom_key)))
+    store.close(); os.remove(path)
+
+
+def test_plugins():
+    print("[test] 플러그인 — 수집(목록·상세·본문캐시·형식검사·오류위치) · 비밀")
+    from core import plugin
+    from core.errors import describe
+    tmp = os.path.join(ROOT, "plugins", "zz_test_src.py")
+    open(tmp, "w", encoding="utf-8").write(
+        "from core.plugin import SourcePlugin\n"
+        "class T(SourcePlugin):\n"
+        "    calls = 0\n"
+        "    def list(self, page):\n"
+        "        T.calls += 1\n"
+        "        if self.config.get('bad'): return [{'title': 'x'}]\n"
+        "        if self.config.get('boom'): return {}['encSddpbSeq']\n"
+        "        return [{'title': '본문동봉', 'url': 'http://p/1', 'content': '<p>동봉</p>'},\n"
+        "                {'title': '상세필요', 'url': 'http://p/2'}]\n"
+        "    def detail(self, url):\n"
+        "        return {'content': '<p>상세</p><img src=\"/a.png\">'}\n")
+    try:
+        f = Fetcher()
+        d = {"dept_id": "zt", "fetch_type": "zz_test_src", "list_url": "http://p/", "fetch_config": "{}"}
+        items = f.scrape_list(d, 1); f.scrape_list(d, 2)
+        check("플러그인 목록", [i["url"] for i in items] == ["http://p/1", "http://p/2"], str(items))
+        check("인스턴스 유지(세션 재사용)", len(f._plugins) == 1, str(f._plugins))
+        check("페이지 지원(PAGINATED)", f.paginated(d) is True, "")
+        c1, c2 = f.fetch_content(d, "http://p/1"), f.fetch_content(d, "http://p/2")
+        check("목록 동봉 본문 → 상세 생략", "동봉" in c1["content"], c1["content"])
+        check("상세 + 이미지 추출(코어)", "상세" in c2["content"] and c2["images"][0]["url"] == "http://p/a.png", str(c2))
+        for cfg, want in (('{"bad": 1}', "title·url 필요"), ('{"boom": 1}', "plugins/zz_test_src.py")):
+            try:
+                Fetcher().scrape_list({**d, "fetch_config": cfg}, 1); msg = ""
+            except Exception as e:
+                msg = describe(e)
+            check(f"플러그인 오류 → '{want}'", want in msg, msg)
+    finally:
+        os.remove(tmp)
+    try:
+        Fetcher().scrape_list({**d, "fetch_type": "no_such_plugin"}, 1); raised = ""
+    except Exception as e:
+        raised = str(e)
+    check("없는 플러그인 → 실패", "plugins/no_such_plugin.py" in raised, raised)
+    # 비밀: 선언된 키가 비어 있으면 무엇이 빠졌는지
+    cls = plugin.load_class("ssupath", "source")
+    old = plugin.SECRETS_DIR
+    plugin.SECRETS_DIR = tempfile.mkdtemp()
+    try:
+        check("비밀 파일 없음 → 키 목록", plugin.missing_secrets("ssupath", cls) == ["userid", "pwd"], "")
+        with open(plugin.secrets_path("ssupath"), "w") as fp:
+            json.dump({"userid": "2026", "pwd": ""}, fp)
+        check("빈 값도 빠진 것으로", plugin.missing_secrets("ssupath", cls) == ["pwd"], "")
+        try:
+            plugin.create("ssupath", "source"); se = ""
+        except plugin.PluginError as e:
+            se = str(e)
+        check("생성 시 친절한 오류", "secrets/plugin_ssupath.json" in se and "pwd" in se, se)
+    finally:
+        plugin.SECRETS_DIR = old
+
+
+def test_ssupath_login():
+    print("[test] 슈패스 플러그인 — 가짜 서버로 로그인·목록·재시도 차단")
+    import plugins.ssupath as sp
+    from core import plugin
+    sp.DELAY = 0
+    P = "https://path.ssu.ac.kr"
+    LIST_HTML = ("""<ul>"""
+        """<li><div class="cont_box"><ul class="major_type"><li>기계공학부</li></ul>"""
+        """<a class="btn01 col08 detailBtn" data-params='{"encSddpbSeq":"k1"}'>모집중</a>"""
+        """<a class="tit ellipsis detailBtn" data-params='{"encSddpbSeq":"k1"}'>피지컬AI 인턴십</a></div></li>"""
+        """<li><div class="cont_box"><ul class="major_type"><li>진로취업팀</li></ul>"""
+        """<a class="tit ellipsis detailBtn" data-params='{"encSddpbSeq":"k2"}'>핀테크 견학</a></div></li></ul>""")
+
+    class Resp:
+        def __init__(self, url, text=""): self.url, self.text = url, text
+        def raise_for_status(self): pass
+
+    class FakeSSO:
+        def __init__(self, pw_ok=True):
+            self.pw_ok, self.logged, self.posts, self.params = pw_ok, False, 0, None
+        def get(self, url, params=None, headers=None, timeout=None):
+            if url.startswith(P + "/comm/login/user/loginChk.do"):
+                return Resp("https://smartid.ssu.ac.kr/Symtra_sso/smln.asp?apiReturnUrl=x",
+                            '<form name="LoginInfo" action="smln_pcs.asp"><input name="in_tp_bit" value="0">'
+                            '<input name="rqst_caus_cd" value="03"><input name="userid"><input name="pwd">'
+                            '<input name="chkSave"></form>')
+            if "loginProc.do" in url:
+                if (headers or {}).get("Referer", "").endswith("smln_pcs.asp"):
+                    self.logged = True
+                    return Resp(P + "/ptfol/imng/icmpNsbjtPgm/findIcmpNsbjtPgmList.do", LIST_HTML)
+                return Resp(P + "/error_referer.jsp")
+            if not self.logged:
+                return Resp(P + "/comm/login/user/login.do?rtnUrl=abc123")
+            self.params = params
+            if params and "operYySh" in params:
+                self.years = getattr(self, "years", []) + [params["operYySh"]]
+            return Resp(url, LIST_HTML if "List" in url else '<div id="tilesContent"><table>상세</table></div>')
+        def post(self, url, data=None, headers=None, timeout=None):
+            self.posts += 1
+            ok = self.pw_ok and data.get("pwd") == "right"
+            return Resp("https://smartid.ssu.ac.kr/Symtra_sso/smln_pcs.asp",
+                        "<script>parent.location.href = '" + P + "/comm/login/user/loginProc.do?rtnUrl=x&sIdno=1';</script>"
+                        if ok else "<script>alert('비밀번호가 일치하지 않습니다.');history.back();</script>")
+
+    cls = plugin.load_class("ssupath", "source")
+    sso = FakeSSO()
+    p = cls(secrets={"userid": "2026", "pwd": "right"}, config={"exclude_org": ["진로취업팀"]}, session=sso, timeout=5)
+    items = p.list(1)
+    check("로그인 → 목록(상태버튼 아닌 제목, 진로취업팀 제외)",
+          items == [{"title": "피지컬AI 인턴십", "url": P + "/ptfol/imng/icmpNsbjtPgm/findIcmpNsbjtPgmInfo.do?encSddpbSeq=k1"}], str(items))
+    check("필터를 빈 값까지 명시(세션 검색어 새어듦 방지)", sso.params.get("searchValue") == "" and sso.params["sort"] == "0001", str(sso.params))
+    from datetime import datetime as _dt
+    y = _dt.now().year
+    check("작년·올해·내년 모두 조회(학년도 경계)", sorted(sso.years[:3]) == [str(y - 1), str(y), str(y + 1)], str(sso.years))
+    check("상세 #tilesContent", "상세" in p.detail(items[0]["url"])["content"], "")
+    sso.logged = False                                                     # 세션 만료
+    check("세션 만료 → 재로그인 1회로 복구", len(p.list(1)) == 1 and sso.posts == 2, str(sso.posts))
+
+    bad = FakeSSO()
+    q = cls(secrets={"userid": "2026", "pwd": "wrong"}, config={}, session=bad, timeout=5)
+    msgs = []
+    for _ in range(3):
+        try:
+            q.list(1)
+        except PermissionError as e:
+            msgs.append(str(e))
+    check("비밀번호 거부 → 사유 포함", len(msgs) == 3 and "비밀번호가 일치하지 않습니다" in msgs[0], msgs[:1])
+    check("거부 후 재시도 안 함(계정 잠금 방지)", bad.posts == 1, f"POST {bad.posts}회")
+
+
 def test_diff_seed_new_limit():
     print("[test] 차집합 · 시딩 · UPDATE_LIMIT")
     store, path = temp_store([DEPT])
@@ -356,9 +607,9 @@ def test_run_once_e2e():
     base_items = [{"title": f"기존{i}", "url": f"http://x/e{i}"} for i in range(2)]
     fake = FakeFetcher({"testdept": list(base_items)})
     c = Components(
-        store=store, fetcher=fake, ocr=get_ocr("none"),
+        store=store, fetcher=fake,
         summarizer=OpenAICompatSummarizer(base_url=base, model="test-e2b"),
-        notifier=Notifier(dst="mono"), queue=WorkQueue(max_concurrency=1), clova=None)
+        notifier=Notifier(dst="mono"), queue=WorkQueue(max_concurrency=1))
 
     asyncio.run(run_once(c))  # 1회차: 전량 'seeded'(무발송)
     seeded = store.recent_notices()
@@ -387,9 +638,9 @@ def test_debug_resummarize():
     items = [{"title": f"공지{i}", "url": f"http://x/d{i}"} for i in range(3)]
     fake = FakeFetcher({"testdept": list(items)})
     c = Components(
-        store=store, fetcher=fake, ocr=get_ocr("none"),
+        store=store, fetcher=fake,
         summarizer=OpenAICompatSummarizer(base_url=base, model="test-e2b"),
-        notifier=Notifier(), queue=WorkQueue(max_concurrency=1), clova=None)
+        notifier=Notifier(), queue=WorkQueue(max_concurrency=1))
     asyncio.run(run_once(c))                       # 시딩(통합테이블: 전량 'seeded' 행)
     seeded = store.recent_notices()
     check("시딩 후 seeded 3", len(seeded) == 3 and all(r["status"] == "seeded" for r in seeded),
@@ -536,8 +787,8 @@ def test_subscribe_logic():
 
 
 if __name__ == "__main__":
-    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template,
-              test_diff_seed_new_limit, test_llm_client,
+    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template, test_generic_options, test_plugins, test_ssupath_login,
+              test_diff_seed_new_limit, test_crawl_health, test_llm_client,
               test_run_once_e2e, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
               test_subscribe_logic, test_dst_routing):

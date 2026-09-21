@@ -209,6 +209,19 @@ class Store:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
             self._con.commit()
 
+    def delete_meta(self, key: str) -> None:
+        with self._lock:
+            self._con.execute("DELETE FROM app_meta WHERE key=?", (key,))
+            self._con.commit()
+
+    def meta_with_prefix(self, prefix: str) -> Dict[str, str]:
+        """접두어로 시작하는 키 전부(예: 'crawl_fail:' → 학과별 실패 상태)."""
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT key, value FROM app_meta WHERE substr(key, 1, ?) = ?",
+                (len(prefix), prefix)).fetchall()
+        return {r["key"]: r["value"] for r in rows}
+
     # ── 구독 (후속 단계에서 봇이 사용) ─────────────────
     def add_user(self, discord_user_id: str):
         with self._lock:

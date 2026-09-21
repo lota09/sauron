@@ -36,10 +36,18 @@ def _load_token():
         return None
 
 
+def _footer(text, icon_url=None):
+    """임베드 footer. 아이콘이 없으면 icon_url 키 자체를 뺀다(디스코드는 빈 URL을 거부함)."""
+    f = {"text": text}
+    if icon_url:
+        f["icon_url"] = icon_url
+    return f
+
+
 def _footer_icon():
     """비-공지(디버그·자체공지) 임베드 푸터 아이콘 → (icon_url, local_path).
     로컬 파일(config.ICON_DEBUG_FILE)이 있으면 attachment://로 업로드해 쓴다(CDN URL 만료 회피).
-    없으면 ICON_DEBUG(URL)로 폴백."""
+    없으면 ICON_DEBUG(URL)로 폴백(빈값이면 아이콘 없음)."""
     path = getattr(config, "ICON_DEBUG_FILE", None)
     if path and os.path.exists(path):
         return f"attachment://{os.path.basename(path)}", path
@@ -99,7 +107,7 @@ class Notifier:
         elif status == "summary_failed":
             desc = f"​\n{SUMMARY_FAIL_NOTE}\n​"                    # 실패: 대체 문구
         elif status == "no_content":
-            desc = f"​\n{SUMMARY_NO_CONTENT_NOTE}\n​"              # 내용없음(#3): 제목만/OCR실패
+            desc = f"​\n{SUMMARY_NO_CONTENT_NOTE}\n​"              # 내용없음(#3): 제목만/이미지 로드 실패
         else:
             desc = "​"                                            # 발송 직후(요약 대기)
         return {
@@ -111,7 +119,7 @@ class Notifier:
                 "value": f"[▶자세히 보기]({notice['url']})",
                 "inline": True,
             }],
-            "footer": {"text": dept.get("name_ko", ""), "icon_url": dept.get("icon_url") or config.ICON_DEFAULT},
+            "footer": _footer(dept.get("name_ko", ""), dept.get("icon_url") or config.ICON_DEFAULT),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -173,7 +181,7 @@ class Notifier:
             "title": "⚠️ 디버그 메시지",
             "description": f"​\n{content}",
             "color": DEBUG_COLOR,
-            "footer": {"text": "사우론의 눈", "icon_url": icon_url},
+            "footer": _footer(config.BOT_DISPLAY_NAME, icon_url),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         channel = self.debug_channel_id

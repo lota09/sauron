@@ -12,7 +12,6 @@
 
 ```bash
 pip install -r requirements.txt          # requests, beautifulsoup4, lxml
-# OCR 쓸 때만(타겟기기): requirements.txt 주석 참고 (tesseract 권장, paddle 무거움)
 cp secrets/config.json.example secrets/config.json                 # 값 수정
 cp secrets/discord-api-info.json.example secrets/discord-api-info.json  # 봇 토큰(없으면 dry-run)
 ```
@@ -90,16 +89,15 @@ db/
   store.py         DB 접근계층(스레드안전)
   notice.db        생성 결과(gitignore)
 init/
-  depts_seed.csv   64개 학과 시드(셀렉터·fetch_type·채널)
-  seed_db.py       스키마+시드 적재(idempotent)
-  generate_seed.py 시드 재생성 도구(ICT CSV → )
+  depts_seed.csv   학교 사이트 목록(학과마다 1행: 셀렉터·수집방식·설정) ← 학교마다 다른 유일한 곳
+  seed_db.py       CSV 검증 → 스키마+시드 적재(idempotent)
+  drop_dept.py     라이브 DB에서 학과 제거
 crawl/
-  fetcher.py       제네릭 CSS + fetch_type 예외 + infocom 재시도 + 이미지
+  fetcher.py       수집 방식 2개(html·json_api) + 범용 옵션(fetch_config) + 이미지
   diff.py          URL 차집합 + 시딩 + UPDATE_LIMIT
 summarize/
-  llm.py           OpenAI호환 요약(느슨포맷·검증·E2B→E4B→Clova)
-  ocr.py           Tesseract/Paddle/Null 온디맨드 백엔드
-  worker.py        요약 워커(OCR→LLM→DB→디스코드 edit)
+  llm.py           OpenAI호환 요약(느슨포맷·검증·E2B→E4B, 이미지는 비전 입력)
+  worker.py        요약 워커(이미지 준비→LLM(텍스트+비전)→DB→디스코드 edit)
 notify/
   notifier.py      디스코드 발송(D1)+edit(D2)+감시채널, dry-run
 core/
@@ -110,12 +108,51 @@ tests/
   fixtures/        HTML 픽스처
 ```
 
+## 새 학교에 도입
+
+**학교마다 다른 것은 `init/depts_seed.csv` 하나뿐**이다. 코드에는 학교·사이트 이름이 없다.
+
+1. `git clone` 후 `init/depts_seed.csv`를 자기 학교 사이트로 채운다 (학과·공지게시판마다 1행).
+2. `python3 deploy.py` — venv·의존성·봇 토큰·서버 ID 입력 → CSV 검증·DB 적재 → 디스코드 역할·채널 생성 → 기존 공지 시딩(발송 없음) → (선택) 서비스 등록.
+3. CSV에 문제가 있으면 `seed_db`가 **DB를 건드리기 전에** 틀린 행을 전부 보고하고 멈춘다.
+
+### CSV 한 행 = 게시판 하나
+
+| 열 | 필수 | 설명 |
+|---|---|---|
+| `dept_id` | ✓ | 영문·숫자·`_-` 슬러그. 한 번 정하면 바꾸지 말 것(공지 기록의 키) |
+| `name_ko` | ✓ | 표시 이름 = 디스코드 채널·역할 이름 |
+| `kind` | | `general`(전교 공통) · `major`(학과, 기본) · `etc` — 구독 화면의 단계 |
+| `college` | | 단과대. `major`는 이 이름의 카테고리 아래 채널이 생긴다 |
+| `list_url` | ✓ | 목록 주소. 페이지가 있으면 `{{page}}` 자리표시 |
+| `fetch_type` | | `html`(기본) 또는 `json_api` — **수집 방식**만 있고 사이트 전용 타입은 없다 |
+| `link_selector` | html ✓ | 목록에서 공지 링크(`<a>`)를 고르는 CSS |
+| `content_selector` | | 상세 페이지 본문 CSS |
+| `fetch_config` | | JSON. 아래 범용 옵션 |
+| `icon_url` | | 알림 footer 아이콘(학교·학과 로고) |
+| `seed_pages` | | 첫 실행 때 '이미 본 것'으로 기록할 페이지 수(기본 3) |
+
+### 사이트가 평범하지 않을 때 — `fetch_config` 범용 옵션
+
+코드를 고치지 않는다. 모든 사이트가 같은 절차를 타고, 차이는 이 설정뿐이다.
+
+| 상황 | 설정 |
+|---|---|
+| 링크가 `href="#"`이고 키가 `data-*` 속성에 JSON으로 있음 | `{"link_attr": "data-params", "url_template": "view.do?seq={seq}"}` |
+| 링크가 `onclick="fnView('123')"` 류 | `{"link_attr": "onclick", "link_regex": "fnView\\('(?P<id>\\d+)'\\)", "url_template": "view.do?id={id}"}` |
+| 주소에 날짜 같은 매번 바뀌는 쿼리가 붙음 | `{"link_attr": "href", "link_regex": "^(?P<p>[^?#]+)", "url_template": "{p}"}` |
+| 링크가 카드 전체를 감싸 날짜·뱃지가 제목에 섞임 | `{"title_selector": ".tit strong", "title_exclude": "span"}` |
+| 서버가 가끔 200과 함께 PHP 에러페이지를 줌 | `{"error_page_retry": 3}` |
+| 화면을 JS로 그림(목록 HTML에 공지가 없음) | `fetch_type=json_api` + 브라우저 개발자도구에서 찾은 API: `{"list_url": ".../list?page={page}", "list_path": "data.list", "id_key": "id", "title_key": "title", "url_template": "https://…/notice/{id}", "content_key": "content"}` — 목록에 본문이 없으면 `content_key` 대신 `"detail_path": "data.content"`(공지 URL이 주는 JSON에서 본문 경로) |
+
+⚠ **`url_template` 등을 바꾸면 URL이 바뀌어 기존 공지가 전부 '신규'로 보인다.** 운영 중인 학과의 설정을 바꿀 땐 바꾸기 전후 목록 URL이 같은지 먼저 확인할 것 (다르면 `UPDATE_LIMIT`가 대량 발송을 막고 감시채널로 경보한다).
+
 ## 동작 흐름
 
 1. **스케줄러(10분)** → `crawl_pass`: 전 학과 크롤 → `diff` 차집합 신규 감지.
 2. 신규 → (제목·url) `seeded` 기록 → 콘텐츠 fetch → `notices`(status=detected) → (발송 대상이면)**디스코드 즉시 발송**(제목+링크, poly면 +@everyone, status=notified) → 요약 큐 적재.
-3. **요약 워커**: 큐에서 인터럽트식 기상 → (이미지 시 OCR) → LLM 요약(Semaphore로 동시성 제한) → DB 기록 → **디스코드 메시지 edit로 요약 삽입**(status=done).
-4. 요약 실패 = 요약만 포기(알림은 유지). Clova 폴백(옵션) 시 감시채널 로그.
+3. **요약 워커**: 큐에서 인터럽트식 기상 → (이미지는 비전 LLM에 직접 첨부) → LLM 요약(Semaphore로 동시성 제한) → DB 기록 → **디스코드 메시지 edit로 요약 삽입**(status=done).
+4. 요약 실패 = 요약만 포기(알림은 유지) + 감시채널 알림.
 
 ## 디스코드 구독 봇 (C안, 웹 없이 인앱)
 

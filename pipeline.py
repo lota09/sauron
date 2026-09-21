@@ -10,6 +10,8 @@ import asyncio
 import json
 
 import config
+from core import errors
+from core.crawl_health import CrawlHealth
 from crawl.diff import detect_new, FetchEmpty, TooManyNew
 
 
@@ -20,17 +22,22 @@ def _label(dept):
 
 
 class Components:
-    def __init__(self, store, fetcher, ocr, summarizer, notifier, queue,
-                 clova=None, logger=None, nosummary=False):
+    def __init__(self, store, fetcher, summarizer, notifier, queue, logger=None, nosummary=False):
         self.store = store
         self.fetcher = fetcher
-        self.ocr = ocr
         self.summarizer = summarizer
         self.notifier = notifier
         self.queue = queue
-        self.clova = clova
         self.logger = logger
         self.nosummary = bool(nosummary)   # 요약(+상세fetch) 생략
+        self._health = None
+
+    @property
+    def health(self):
+        """학과별 수집 실패 상태(상태 변화만 알림). 첫 사용 때 DB에서 실패 중인 학과를 읽어온다."""
+        if self._health is None:
+            self._health = CrawlHealth(self.store, self.notifier, self.log)
+        return self._health
 
     def log(self, msg):
         (self.logger.info if self.logger else print)(msg)
@@ -90,15 +97,20 @@ async def crawl_pass(c):
 
     total_new = 0
     for dept, new_items, err in results:
-        if err is not None:
-            if isinstance(err, FetchEmpty):
-                c.log(f"[빈 목록] {_label(dept)}: {err}")
-            elif isinstance(err, TooManyNew):
-                c.log(f"[대량알림 차단] {_label(dept)}: {err}")
-                c.notifier.debug(f"{_label(dept)} 신규 {err.count}건 초과 — 사이트 구조 변경 의심")
-            else:
-                c.log(f"[크롤 실패] {_label(dept)}: {err}")
-                c.notifier.debug(f"크롤 실패: {_label(dept)}\n{err}")
+        did, label = dept["dept_id"], _label(dept)
+        if err is not None and not isinstance(err, TooManyNew):
+            # 실패(빈 목록 포함)는 '상태가 바뀔 때만' 감시채널로. 반복은 로그 한 줄(core/crawl_health.py).
+            #   빈 목록도 실패로 친다: 셀렉터가 어긋나면 에러 없이 0건이 되어 조용히 수집이 끊긴다
+            #   (평생교육학과가 사이트 개편 후 3주간 이 상태였다).
+            hint = "목록이 비어 있음 — 셀렉터가 안 맞거나 사이트가 개편됐을 수 있음" if isinstance(err, FetchEmpty) else ""
+            await asyncio.to_thread(c.health.failed, did, label, err, hint)
+            continue
+        await asyncio.to_thread(c.health.ok, did, label)   # 목록을 받아왔으면 수집은 정상
+        if isinstance(err, TooManyNew):
+            # 목록은 받아왔지만 신규가 비정상적으로 많음 = 1회성 사건(전량을 '본 것'으로 전진시켰으므로 반복 안 됨)
+            c.log(f"[대량알림 차단] {label}: {err}")
+            await asyncio.to_thread(c.notifier.debug, f"**대량알림 차단** · {label} · 신규 {err.count}건"
+                                                      f" > UPDATE_LIMIT({config.UPDATE_LIMIT}) — 사이트 구조 변경 의심")
             continue
 
         total_new += len(new_items)
@@ -106,7 +118,7 @@ async def crawl_pass(c):
             try:
                 await _process_new_item(c, dept, item)
             except Exception as e:
-                c.log(f"[신규처리 실패] {_label(dept)} {item.get('title','')[:30]}: {e}")
+                c.log(f"[신규처리 실패] {label} {item.get('title','')[:30]}\n{errors.full(e)}")
     c.log(f"[crawl_pass] 신규 {total_new}건 감지"
           + ("(시딩만)" if (c.nosummary and not c.notifier.send_enabled) else "·처리"))
     return total_new
