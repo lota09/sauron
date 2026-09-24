@@ -3,10 +3,12 @@
 
 크롤은 10분마다 돈다. 실패할 때마다 감시채널에 보내면 사이트 하나가 죽었을 때 하루 수십 통이 쌓인다
 (영화예술 사이트 장애 때 하루 45회 실패). 그래서:
-  · 처음 실패          → 알림 (원인·발생 위치)
+  · 연속 CRAWL_FAIL_ALERT_AFTER 회 실패 → 알림 (원인·발생 위치). 그 전까지는 로그만
+      한 번 실패하고 다음 크롤에 살아나는 일시 장애로 실패·복구 알림이 왕복하는 걸 막는다
+      (실측: 글로벌미디어가 하루 9번 왕복 = 18통).
   · 같은 원인으로 계속  → 로그만. CRAWL_FAIL_REMIND_SEC 마다 '아직 실패 중' 한 번
-  · 원인이 바뀜        → 알림 (다른 고장일 수 있으므로)
-  · 성공으로 돌아옴     → '복구됨' 한 번
+  · 원인이 바뀜        → 알림 (이미 알린 고장에 한해 — 다른 고장일 수 있으므로)
+  · 성공으로 돌아옴     → '복구됨' 한 번 (알린 적 있을 때만)
 상태는 app_meta('crawl_fail:<dept_id>')에 JSON으로 둔다 → 크롤러가 재시작해도 이어진다.
 '같은 원인' = core.errors.signature (원인 예외 타입 + 우리 코드의 발생 위치). 메시지는 숫자 등이
 매번 달라질 수 있어 비교에서 뺀다.
@@ -27,9 +29,10 @@ def _dur(sec):
 
 
 class CrawlHealth:
-    def __init__(self, store, notifier, log, remind_sec=None):
+    def __init__(self, store, notifier, log, remind_sec=None, alert_after=None):
         self.store, self.notifier, self.log = store, notifier, log
         self.remind = config.CRAWL_FAIL_REMIND_SEC if remind_sec is None else remind_sec
+        self.alert_after = max(1, config.CRAWL_FAIL_ALERT_AFTER if alert_after is None else alert_after)
         # 실패 중인 학과만 메모리에 들고 있어, 정상 학과의 ok()는 DB를 건드리지 않는다.
         self._failing = {k[len(PREFIX):] for k in store.meta_with_prefix(PREFIX)}
 
@@ -46,23 +49,28 @@ class CrawlHealth:
         st = json.loads(raw) if raw else None
         body = f"{hint}\n{desc}" if hint else desc
         if st is None:
-            st = {"since": now, "count": 1, "sig": sig, "last_alert": now}
-            self.log(f"[크롤 실패 시작] {label}\n{full(err)}")      # 처음엔 전체 트레이스백
-            self._alert(f"**크롤 실패** · {label}\n{body}")
+            st = {"since": now, "count": 1, "sig": sig, "last_alert": 0, "alerted": False}
+            self.log(f"[크롤 실패 시작] {label} (연속 {self.alert_after}회부터 알림)\n{full(err)}")
         else:
             st["count"] += 1
-            if st["sig"] != sig:
+            if st["sig"] != sig and st.get("alerted"):
                 st["sig"], st["last_alert"] = sig, now
                 self.log(f"[크롤 실패 원인 변경] {label} ({st['count']}회째)\n{full(err)}")
                 self._alert(f"**크롤 실패 — 원인 바뀜** · {label} · {st['count']}회째 "
                             f"({_dur(now - st['since'])} 전부터)\n{body}")
-            elif now - st["last_alert"] >= self.remind:
+            elif st.get("alerted") and now - st["last_alert"] >= self.remind:
                 st["last_alert"] = now
                 self.log(f"[크롤 실패 지속] {label} · {st['count']}회째 · {sig}")
                 self._alert(f"**여전히 크롤 실패** · {label} · {st['count']}회째 · "
                             f"{_dur(now - st['since'])}째\n{body}")
             else:
+                st["sig"] = sig
                 self.log(f"[크롤 실패] {label} · {st['count']}회째 · {sig}")   # 반복은 한 줄만
+        if not st.get("alerted") and st["count"] >= self.alert_after:
+            # 일시 장애가 아니라 '계속 실패'로 확정된 시점에 한 번 알린다.
+            st["alerted"], st["last_alert"] = True, now
+            self._alert(f"**크롤 실패** · {label} · {st['count']}회 연속 "
+                        f"({_dur(now - st['since'])}째)\n{body}")
         self.store.set_meta(key, json.dumps(st))
         self._failing.add(dept_id)
 
@@ -76,9 +84,11 @@ class CrawlHealth:
             return
         st = json.loads(raw)
         self.store.delete_meta(key)
-        self.log(f"[크롤 복구] {label} · {st['count']}회 실패 · {_dur(time.time() - st['since'])} 만에")
-        self._alert(f"**크롤 복구** · {label} · {st['count']}회 실패 후 "
-                    f"{_dur(time.time() - st['since'])} 만에 정상화")
+        self.log(f"[크롤 복구] {label} · {st['count']}회 실패 · {_dur(time.time() - st['since'])} 만에"
+                 + ("" if st.get("alerted") else " (알린 적 없는 일시 장애 → 알림 없음)"))
+        if st.get("alerted"):          # 알리지 않은 일시 장애는 복구도 알리지 않는다
+            self._alert(f"**크롤 복구** · {label} · {st['count']}회 실패 후 "
+                        f"{_dur(time.time() - st['since'])} 만에 정상화")
 
     def failing(self):
         """현재 실패 중인 학과 → 상태(dict). /상태 표시 등에 쓸 수 있다."""

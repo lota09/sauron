@@ -359,7 +359,7 @@ def test_generic_options():
 
 
 def test_crawl_health():
-    print("[test] 수집 실패 알림 — 상태 변화만(시작·원인변경·지속 리마인드·복구) + 예외 서식")
+    print("[test] 수집 실패 알림 — 연속 N회부터·일시장애 침묵·원인변경·리마인드·복구 + 예외 서식")
     import time as _t
     from core.crawl_health import CrawlHealth
     from core.errors import describe
@@ -387,19 +387,22 @@ def test_crawl_health():
         except Exception as e:
             return e
 
-    h = CrawlHealth(store, N(), logs.append, remind_sec=3600)
+    h = CrawlHealth(store, N(), logs.append, remind_sec=3600, alert_after=3)
+    h.failed("t", "테스트학과(t)", err(boom_net))
+    h.ok("t", "테스트학과(t)")                                   # 한 번 실패 후 곧장 복구(일시 장애)
+    check("일시 장애(1회 실패 후 복구)는 조용", sent == [], str(sent))
     for _ in range(3):
         h.failed("t", "테스트학과(t)", err(boom_net))
-    check("같은 원인 3회 → 알림 1통", len(sent) == 1 and "크롤 실패" in sent[0], str(sent))
+    check("연속 3회째에 알림 1통", len(sent) == 1 and "3회 연속" in sent[0], str(sent))
     check("알림에 원인 타입·우리 코드 위치", "원인: ConnectionError" in sent[0] and "@ tests/run_tests.py" in sent[0], sent[0])
     h.failed("t", "테스트학과(t)", err(boom_key))
     check("원인 바뀜 → 알림", len(sent) == 2 and "원인 바뀜" in sent[1] and "KeyError" in sent[1], str(sent[-1:]))
 
-    h2 = CrawlHealth(store, N(), logs.append, remind_sec=3600)      # 크롤러 재시작
+    h2 = CrawlHealth(store, N(), logs.append, remind_sec=3600, alert_after=3)      # 크롤러 재시작
     h2.failed("t", "테스트학과(t)", err(boom_key))
     check("재시작 후에도 상태 이어짐(재알림 없음)", len(sent) == 2, str(len(sent)))
     st = h2.failing()["t"]
-    check("누적 횟수 보존", st["count"] == 5, str(st))
+    check("누적 횟수 보존", st["count"] == 5 and st["alerted"] is True, str(st))
 
     st["last_alert"] = _t.time() - 4000                              # 리마인드 간격 경과
     store.set_meta("crawl_fail:t", json.dumps(st))
@@ -410,8 +413,9 @@ def test_crawl_health():
     check("복구 → 알림 + 상태 삭제", len(sent) == 4 and "복구" in sent[3] and not h2.failing(), str(sent[-1:]))
     h2.ok("t", "테스트학과(t)")
     check("정상 반복은 조용", len(sent) == 4, str(len(sent)))
-    h2.failed("t", "테스트학과(t)", err(boom_net))
-    check("복구 후 다시 실패 → 새로 알림", len(sent) == 5 and "크롤 실패" in sent[4], str(sent[-1:]))
+    for _ in range(3):
+        h2.failed("t", "테스트학과(t)", err(boom_net))
+    check("복구 후 다시 연속 실패 → 새로 알림", len(sent) == 5 and "3회 연속" in sent[4], str(sent[-1:]))
     check("describe: 감싼 예외 → 원인까지", "원인: KeyError" in describe(err(boom_key)), describe(err(boom_key)))
     store.close(); os.remove(path)
 
@@ -654,6 +658,34 @@ def test_image_and_stream_errors():
         msg = str(e)
     srv.shutdown()
     check("스트림 속 서버 오류를 사유로(빈응답으로 뭉개지 않음)", "Failed to decode image" in msg, msg)
+
+
+def test_debug_message_shape():
+    print("[test] 감시채널 메시지 — 첨부 없이 임베드만 · 첫 줄이 제목(폰 푸시에 내용이 보이게)")
+    import notify.notifier as nt
+    seen = {}
+
+    class Fake:
+        @staticmethod
+        def post(url, headers=None, data=None, timeout=None, **kw):
+            seen["url"], seen["kw"] = url, kw
+            seen["payload"] = json.loads(data) if data else None
+            return type("R", (), {"status_code": 200, "json": lambda self: {"id": "1"}})()
+    real = nt.requests
+    nt.requests = Fake
+    try:
+        n = Notifier(dst="null", debug_channel_id="1")
+        n.token, n.dry = "fake", False
+        n.debug("**크롤 실패** · 글로벌미디어학부(media) · 3회 연속\nscrape_list 실패(media p1)\n원인: ConnectionError")
+        p = seen["payload"]
+        check("첨부 없음(푸시가 '이미지를 보냈습니다'로 덮이지 않게)", "files" not in seen["kw"] and not seen["kw"], str(seen["kw"]))
+        check("임베드만(본문 content 없음)", sorted(p) == ["allowed_mentions", "embeds"], str(sorted(p)))
+        check("첫 줄이 제목으로(굵게 표시 제거)",
+              p["embeds"][0]["title"] == "⚠️ 크롤 실패 · 글로벌미디어학부(media) · 3회 연속", p["embeds"][0]["title"])
+        check("나머지는 설명에", "원인: ConnectionError" in p["embeds"][0]["description"], "")
+        check("멘션 차단 유지", p["allowed_mentions"] == {"parse": []}, str(p["allowed_mentions"]))
+    finally:
+        nt.requests = real
 
 
 def test_diff_seed_new_limit():
@@ -904,7 +936,7 @@ def test_subscribe_logic():
 
 if __name__ == "__main__":
     for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template, test_generic_options, test_plugins, test_ssupath_login, test_category_rename,
-              test_diff_seed_new_limit, test_crawl_health, test_llm_client, test_llm_timeout_vs_disconnect, test_image_and_stream_errors,
+              test_diff_seed_new_limit, test_crawl_health, test_debug_message_shape, test_llm_client, test_llm_timeout_vs_disconnect, test_image_and_stream_errors,
               test_run_once_e2e, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
               test_subscribe_logic, test_dst_routing):

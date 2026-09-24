@@ -129,7 +129,10 @@ LLM_USER_TEMPLATE = """다음 학사공지를 개조식 불릿으로 요약해�
 
 # ── 크롤 ─────────────────────────────────────────────
 UPDATE_LIMIT = _get_int("UPDATE_LIMIT", 10)     # 신규가 이보다 많으면 사이트깨짐 의심→대량알림 차단
-# 수집 실패 알림: 처음·원인 변경·복구 때만 보내고, 같은 원인이 계속되면 이 간격마다 '아직 실패 중' 한 번.
+# 수집 실패 알림: 연속 이 횟수만큼 실패해야 알린다. 사이트가 가끔 끊겼다 살아나는 것(일시 장애)으로
+# 실패·복구 알림이 왕복하는 걸 막는다(실측: 한 사이트가 하루 9번 왕복 = 18통). 3회 ≈ 30분(크롤주기 10분).
+CRAWL_FAIL_ALERT_AFTER = _get_int("CRAWL_FAIL_ALERT_AFTER", 3)
+# 알린 뒤에도 같은 원인이 계속되면 이 간격마다 '아직 실패 중' 한 번.
 CRAWL_FAIL_REMIND_SEC = _get_int("CRAWL_FAIL_REMIND_SEC", 6 * 3600)
 SEED_PAGES = _get_int("SEED_PAGES", 3)          # depts.seed_pages 없을 때 기본
 JSON_API_SCAN_PAGES = _get_int("JSON_API_SCAN_PAGES", 12)  # json_api 본문 캐시 미스 시 훑을 최대 페이지수(깊은페이지 재처리)
@@ -188,9 +191,8 @@ BOT_DISPLAY_NAME = _get("BOT_DISPLAY_NAME", "사우론의 눈")
 # 공지 임베드 footer 아이콘: 학과 행의 icon_url이 우선, 없으면 이 값(빈값 = 아이콘 없음).
 #   학교 로고 같은 배포처별 값이라 코드 기본값은 비워 둔다.
 ICON_DEFAULT = _get("ICON_DEFAULT", "")
-# 비-공지(디버그 등) 임베드 아이콘. ICON_DEBUG_FILE이 있으면 attachment://로 업로드(URL 만료 없음),
-#   없으면 ICON_DEBUG(URL), 그것도 비면 아이콘 없음.
-ICON_DEBUG_FILE = _get("ICON_DEBUG_FILE", os.path.join(_HERE, "assets", "icon_debug.png"))
+# 디버그 임베드 footer 아이콘 URL(빈값 = 아이콘 없음). 파일 첨부는 쓰지 않는다 —
+#   첨부가 있으면 폰 푸시가 '이미지를 보냈습니다'로 덮여 무슨 문제인지 안 보인다(notify/notifier.py).
 ICON_DEBUG = _get("ICON_DEBUG", "")
 
 

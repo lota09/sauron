@@ -10,6 +10,7 @@ DRY_RUN(또는 토큰 없음): 실제 전송 대신 로그 + 가짜 message_id �
 """
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 import requests
@@ -44,14 +45,23 @@ def _footer(text, icon_url=None):
     return f
 
 
+def _split_headline(content, limit=240):
+    """디버그 내용 → (제목, 본문). 첫 줄을 임베드 제목으로 올린다.
+    공지 알림처럼 제목에 요점이 있어야 폰 푸시에서 무슨 일인지 바로 보인다
+    (제목이 항상 '디버그 메시지'면 알림만 보고는 알 수 없다)."""
+    lines = [ln.rstrip() for ln in (content or "").splitlines()]
+    head = next((ln for ln in lines if ln.strip()), "")
+    rest = lines[lines.index(head) + 1:] if head in lines else lines
+    title = re.sub(r"[*`]", "", re.sub(r"^\s*[#>]+\s*", "", head)).strip()   # 굵게·코드표시만 제거
+    return (title[:limit - 1] + "…") if len(title) > limit else title, "\n".join(rest).strip()
+
+
 def _footer_icon():
-    """비-공지(디버그·자체공지) 임베드 푸터 아이콘 → (icon_url, local_path).
-    로컬 파일(config.ICON_DEBUG_FILE)이 있으면 attachment://로 업로드해 쓴다(CDN URL 만료 회피).
-    없으면 ICON_DEBUG(URL)로 폴백(빈값이면 아이콘 없음)."""
-    path = getattr(config, "ICON_DEBUG_FILE", None)
-    if path and os.path.exists(path):
-        return f"attachment://{os.path.basename(path)}", path
-    return config.ICON_DEBUG, None
+    """디버그 임베드 푸터 아이콘 URL(없으면 빈값 = 아이콘 없음).
+    ⚠ 파일 첨부(attachment://)를 쓰지 않는다: 첨부가 있으면 디스코드 폰 푸시가 임베드 내용 대신
+      '이미지를 보냈습니다'로 덮어써서, 무슨 문제인지 알림만 보고는 알 수 없다(공지 알림은 임베드만
+      보내서 이 문제가 없다). 아이콘이 필요하면 만료되지 않는 URL을 ICON_DEBUG에 넣는다."""
+    return config.ICON_DEBUG
 
 
 class Notifier:
@@ -176,10 +186,11 @@ class Notifier:
                    + (f"\n[▶공지 보기]({url})" if url else ""))
 
     def debug(self, content):
-        icon_url, icon_file = _footer_icon()   # 로컬 아이콘 있으면 attachment://, 없으면 URL 폴백
+        icon_url = _footer_icon()
+        title, body = _split_headline(content)
         embed = {
-            "title": "⚠️ 디버그 메시지",
-            "description": f"​\n{content}",
+            "title": f"⚠️ {title}" if title else "⚠️ 디버그 메시지",
+            "description": f"​\n{body}" if body else "​",
             "color": DEBUG_COLOR,
             "footer": _footer(config.BOT_DISPLAY_NAME, icon_url),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -196,22 +207,15 @@ class Notifier:
             self._log(f"[디버그(미발송)] {content}")
             return
         try:
-            self._post_debug(channel, embed, icon_file)
+            self._post_debug(channel, embed)
         except Exception as e:
             self._log(f"[debug 전송 실패] {e}")
 
-    def _post_debug(self, channel_id, embed, icon_file=None):
-        # debug는 dst=null(dry)여도 전송(감시 목적). 토큰 있을 때만. 멘션 없음(임베드만).
+    def _post_debug(self, channel_id, embed):
+        # debug는 dst=null(dry)여도 전송(감시 목적). 토큰 있을 때만. 임베드만(첨부 없음 — 위 _footer_icon 참고).
         payload = {"embeds": [embed], "allowed_mentions": {"parse": []}}
-        url = f"{API}/channels/{channel_id}/messages"
-        if icon_file:
-            # 로컬 아이콘을 multipart로 첨부(attachment://). Content-Type은 requests가 boundary와 함께 지정.
-            with open(icon_file, "rb") as f:
-                files = {"files[0]": (os.path.basename(icon_file), f.read(), "image/png")}
-            r = requests.post(url, headers={"Authorization": f"Bot {self.token}"},
-                              data={"payload_json": json.dumps(payload)}, files=files, timeout=30)
-        else:
-            r = requests.post(url, headers=self._headers(), data=json.dumps(payload), timeout=30)
+        r = requests.post(f"{API}/channels/{channel_id}/messages",
+                          headers=self._headers(), data=json.dumps(payload), timeout=30)
         if r.status_code not in (200, 201):
             raise RuntimeError(f"디버그 전송 실패 {r.status_code} (ch={channel_id}): {r.text[:150]}")
         return r.json()
