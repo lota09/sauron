@@ -47,8 +47,8 @@
                  │                                                                        │
 [스케줄러 10분]──┼─▶ (B) 크롤 & 차집합 감지 ──▶ SQLite(notices 단일 테이블)               │
                  │           │                                                            │
-                 │           ▼  (신규 감지 즉시)                                           │
-                 │      (D1) 디스코드 "제목+링크+@everyone" 발송 → message_id 저장         │
+                 │           ▼  (신규 감지)                                               │
+                 │      상세 fetch → notices(detected)                                     │
                  │           │                                                            │
                  │           ▼  queue.put(notice_id)   ← 인프로세스 인터럽트               │
                  │      ┌────────────────┐                                                │
@@ -59,7 +59,7 @@
                  │      (C) 요약 워커: [이미지있으면 OCR] → LLM(localhost:8000) → 결과      │
                  │           │                                                            │
                  │           ▼                                                            │
-                 │      (D2) 디스코드 message_id를 edit 하여 요약 삽입                      │
+                 │      (D) 디스코드 "제목+요약+링크" 발송(요약 실패 시 실패 문구)            │
                  │                                                                        │
                  │  [상시] 디스코드 봇: /구독 · 버튼 → Select 메뉴 → 역할부여 + subscriptions │
                  │  [상시] keep-alive & 디버그 → 감시채널(CHANNEL_ID_DEBUG)                 │
@@ -153,9 +153,18 @@ sauron이 60개로 못 간 이유: **사이트마다 파이썬 클래스/모델�
 
 우선순위(누락 0 > 요약)를 코드에 반영한다.
 
-1. **감지 즉시(D1):** 디스코드에 `📢 제목` + `🔗 자세히 보기` + `@everyone` 임베드 발송 → 반환된 **message_id를 notices에 저장** → `status='notified'` → `queue.put`.
-2. **요약 완료 후(D2):** 저장된 message_id를 **edit(PATCH)** 하여 요약 삽입 → `status='done'`.
-3. 요약 실패/타임아웃 → 메시지는 제목+링크 상태로 유지, `status='summary_failed'`.
+**2026-10-09 변경 — 발송은 요약 뒤 1회(`SEND_AFTER_SUMMARY=True`).** 2단 발송(아래)에서는 디스코드
+폰 푸시 미리보기에 제목만 보여서, 정작 알림을 받은 순간엔 요약을 볼 수 없었다. 요약을 기다렸다 한 번에 보낸다.
+
+1. **감지:** 상세 fetch → `notices`(`status='detected'`) → `queue.put`.
+2. **요약 완료 후:** 요약을 DB에 쓰되 상태는 **'미완'(summarizing)** 으로 둔다 → `📢 제목` + 요약 + `🔗 자세히 보기`
+   임베드 **발송** → message_id 저장 → 최종 상태(`done` / `summary_failed` / `no_content`).
+3. 요약 실패/타임아웃 → 요약 자리에 '요약을 실패하였습니다'를 넣어 **그대로 발송**, `status='summary_failed'` + 감시채널 알림.
+4. 발송 전에 죽거나 디스코드 전송이 실패하면 상태가 '미완'이라 **다음 부팅 때 재적재**된다(`core/queue.py`).
+   요약이 이미 저장돼 있으면 LLM은 다시 부르지 않고 **발송만** 재시도한다.
+
+(이전 설계 = 2단 발송. `SEND_AFTER_SUMMARY=False`로 그대로 쓸 수 있다: 감지 즉시 제목+링크 발송(`notified`)
+→ 요약 완료 후 그 message_id를 **edit(PATCH)** 해 요약 삽입(`done`). 발송이 요약을 기다리지 않는 대신 푸시에 요약이 없다.)
 
 → **"요약 성공"이 "알림 발송"의 전제가 되지 않는다.** 임베드 포맷은 sauron `DiscordMsg.SendEmbedMessage` 계승(제목 📢, description=요약, 링크 필드 @everyone, footer=학과명+아이콘).
 
@@ -254,7 +263,7 @@ sauron_reborn/
 │   ├─ ocr.py                ← Tesseract/Paddle 온디맨드
 │   └─ clova.py              ← 실패건 폴백(+감시채널 로그)
 ├─ discord/
-│   ├─ notify.py             ← 임베드 발송(D1) + edit(D2), 감시채널
+│   ├─ notify.py             ← 임베드 발송(요약 포함) + edit(2단 모드), 감시채널
 │   └─ bot.py                ← 구독 봇(슬래시/버튼/Select, 역할부여)
 ├─ core/
 │   ├─ queue.py              ← asyncio.Queue + 크래시복원 재적재

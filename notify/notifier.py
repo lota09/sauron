@@ -2,9 +2,10 @@
 """
 notify/notifier.py — 디스코드 발송 (sauron DiscordMsg 이식 + 메시지 edit)
 
-- send_new(notice, dept) -> (channel_id, message_id)   : 제목+링크 즉시 발송(D1)
-- edit_summary(channel_id, message_id, notice, dept)   : 요약 도착 후 메시지 수정(D2)
-- debug(text)                                          : 감시채널 디버그 임베드
+- send_new(notice, dept) -> (channel_id, message_id)      : 공지 발송(요약이 있으면 함께 담긴다)
+- send_summarized(notice, dept) -> (channel_id, message_id): 요약까지 끝난 공지 1회 발송(기본 경로)
+- edit_summary(channel_id, message_id, notice, dept)      : 2단 발송에서 요약 도착 후 메시지 수정
+- debug(text)                                            : 감시채널 디버그 임베드
 DRY_RUN(또는 토큰 없음): 실제 전송 대신 로그 + 가짜 message_id 반환(테스트용).
 멘션 없음: 공지·디버그 모두 역할/유저 멘션을 붙이지 않는다(allowed_mentions로 이중 차단).
 """
@@ -119,7 +120,7 @@ class Notifier:
         elif status == "no_content":
             desc = f"​\n{SUMMARY_NO_CONTENT_NOTE}\n​"              # 내용없음(#3): 제목만/이미지 로드 실패
         else:
-            desc = "​"                                            # 발송 직후(요약 대기)
+            desc = "​"                                            # 요약 대기(2단 발송의 1단)
         return {
             "title": f"📢 {notice['title']}",
             "description": desc,
@@ -160,6 +161,16 @@ class Notifier:
             channel_id = self.mono_channel_id or "null"
         res = self._post(channel_id, self._embed(notice, dept))
         return channel_id, res["id"]
+
+    def send_summarized(self, notice, dept):
+        """요약까지 끝난 공지를 한 번에 발송(config.SEND_AFTER_SUMMARY의 기본 경로).
+        실패 문구가 사용자에게 보이는 순간의 감시채널 디버그는 edit_summary와 똑같이 여기서 책임진다
+        — 발송이 실패해도 디버그는 나간다(오히려 그때가 더 중요) → finally."""
+        try:
+            return self.send_new(notice, dept)
+        finally:
+            if notice.get("status") == "summary_failed":
+                self.debug_summary_failed(notice, dept)
 
     def edit_summary(self, channel_id, message_id, notice, dept):
         """요약 결과를 원 메시지에 반영. 실패 상태면 감시채널 디버그도 여기서 함께 보낸다.

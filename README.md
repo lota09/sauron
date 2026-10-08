@@ -101,9 +101,9 @@ crawl/
   diff.py          URL 차집합 + 시딩 + UPDATE_LIMIT
 summarize/
   llm.py           OpenAI호환 요약(느슨포맷·검증·E2B→E4B, 이미지는 비전 입력)
-  worker.py        요약 워커(이미지 준비→LLM(텍스트+비전)→DB→디스코드 edit)
+  worker.py        요약 워커(이미지 준비→LLM(텍스트+비전)→DB→디스코드 발송/edit)
 notify/
-  notifier.py      디스코드 발송(D1)+edit(D2)+감시채널, dry-run
+  notifier.py      디스코드 발송(요약 포함)+edit(2단 모드)+감시채널, dry-run
 core/
   queue.py         asyncio.Queue + Semaphore + 부팅재적재
   log.py           로거
@@ -154,9 +154,13 @@ tests/
 ## 동작 흐름
 
 1. **스케줄러(10분)** → `crawl_pass`: 전 학과 크롤 → `diff` 차집합 신규 감지.
-2. 신규 → (제목·url) `seeded` 기록 → 콘텐츠 fetch → `notices`(status=detected) → (발송 대상이면)**디스코드 즉시 발송**(제목+링크, poly면 +@everyone, status=notified) → 요약 큐 적재.
-3. **요약 워커**: 큐에서 인터럽트식 기상 → (이미지는 비전 LLM에 직접 첨부) → LLM 요약(Semaphore로 동시성 제한) → DB 기록 → **디스코드 메시지 edit로 요약 삽입**(status=done).
-4. 요약 실패 = 요약만 포기(알림은 유지) + 감시채널 알림.
+2. 신규 → (제목·url) `seeded` 기록 → 콘텐츠 fetch → `notices`(status=detected) → 요약 큐 적재.
+3. **요약 워커**: 큐에서 인터럽트식 기상 → (이미지는 비전 LLM에 직접 첨부) → LLM 요약(Semaphore로 동시성 제한) → DB 기록 → **디스코드 발송**(제목+요약+링크 한 번에, status=done).
+4. 요약 실패 = 요약만 포기. 공지는 '요약을 실패하였습니다' 문구를 달고 **그대로 발송**(누락 0) + 감시채널 알림.
+5. 발송 시점은 `SEND_AFTER_SUMMARY`(기본 True). `False`면 감지 즉시 제목+링크를 보내고 요약이 오면 그 메시지를 **edit**하는 2단 발송이 된다.
+   - True의 이유: 디스코드 **폰 푸시 미리보기에 요약이 그대로 보인다**(2단 발송은 푸시 시점에 제목뿐).
+   - 누락 0은 유지된다: 요약 결과를 저장할 때 상태는 '미완'으로 두고 **발송 성공 후**에 최종 상태를 쓴다 → 발송 전에 죽거나 전송이 실패하면 다음 부팅 때 재적재되어 **LLM 없이 발송만** 다시 시도한다.
+   - 대가: 발송이 요약 시간만큼 늦어진다(1건 ≈ 수십 초, 상한 `LLM_WALL_TIMEOUT`).
 
 ## 디스코드 구독 봇 (C안, 웹 없이 인앱)
 

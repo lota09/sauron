@@ -934,10 +934,118 @@ def test_subscribe_logic():
     store.close(); os.remove(path)
 
 
+def test_send_after_summary():
+    """발송 시점: 요약 뒤 1회 발송(기본) / 2단 발송 / 발송 실패 시 재시도(요약 재사용)."""
+    print("[test] 발송 시점(SEND_AFTER_SUMMARY)")
+    from notify.notifier import SUMMARY_FAIL_NOTE
+    from summarize.worker import drain
+
+    class RecNotifier(Notifier):
+        """실제 전송 대신 기록만. dry 모드의 가짜 id 대신 호출 내역을 검사한다."""
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.token = "T"                      # debug() 경로도 타게(실제 전송은 아래에서 가로챔)
+            self.posts, self.patches, self.debugs = [], [], []
+            self.fail_post = False
+
+        def _post(self, channel_id, embed):
+            self.posts.append(embed)
+            if self.fail_post:
+                raise RuntimeError("디스코드 전송 실패 500 (ch=MONO): 테스트")
+            return {"id": f"m{len(self.posts)}"}
+
+        def _patch(self, channel_id, message_id, embed):
+            self.patches.append((message_id, embed))
+            return {"id": message_id}
+
+        def _post_debug(self, channel_id, embed):
+            self.debugs.append(embed)
+            return {"id": "d"}
+
+    def fresh(llm_mode="ok", after_summary=True):
+        """시딩까지 끝낸 Components + 신규 1건을 들고 있는 fetcher."""
+        config.SEND_AFTER_SUMMARY = after_summary
+        srv, base = start_llm(llm_mode)
+        store, path = temp_store([DEPT])
+        fake = FakeFetcher({"testdept": [{"title": "기존", "url": "http://x/old"}]})
+        c = Components(store=store, fetcher=fake,
+                       summarizer=OpenAICompatSummarizer(base_url=base, model="test-e2b"),
+                       notifier=RecNotifier(dst="mono", mono_channel_id="MONO", debug_channel_id="DBG"),
+                       queue=WorkQueue(max_concurrency=1))
+        asyncio.run(run_once(c))                               # 1회차 = 시딩(무발송)
+        fake.list_map["testdept"] = [{"title": "새 공지", "url": "http://x/new"}] + fake.list_map["testdept"]
+        c.queue = WorkQueue(max_concurrency=1)
+        return c, srv, path
+
+    def row(c):
+        return [r for r in c.store.recent_notices() if r["url"] == "http://x/new"][0]
+
+    old_flag = config.SEND_AFTER_SUMMARY
+    try:
+        # ① 기본: 요약이 끝난 뒤 한 번만 POST. 그 임베드에 요약이 들어 있어야 한다(폰 푸시에 보이는 내용).
+        c, srv, path = fresh()
+        asyncio.run(run_once(c))
+        n = c.notifier
+        r = row(c)
+        check("요약 뒤 1회 발송(POST 1·PATCH 0)", len(n.posts) == 1 and len(n.patches) == 0,
+              f"posts={len(n.posts)} patches={len(n.patches)}")
+        check("발송 임베드에 요약 포함", "테스트 요약입니다" in n.posts[0]["description"],
+              n.posts[0]["description"][:60] if n.posts else "")
+        check("done + message_id 기록", r["status"] == "done" and r["discord_message_id"] == "m1",
+              f"{r['status']}/{r['discord_message_id']}")
+        srv.shutdown(); c.store.close(); os.remove(path)
+
+        # ② 요약이 실패해도 공지는 간다(실패 문구 포함) + 감시채널 디버그.
+        c, srv, path = fresh(llm_mode="refuse")
+        asyncio.run(run_once(c))
+        n, r = c.notifier, row(c)
+        check("요약 실패도 발송됨", len(n.posts) == 1, f"posts={len(n.posts)}")
+        check("실패 문구 포함", SUMMARY_FAIL_NOTE in n.posts[0]["description"] if n.posts else False, "")
+        check("실패 → 감시채널 디버그", any("요약 실패" in (e.get("title") or "") for e in n.debugs),
+              str([e.get("title") for e in n.debugs]))
+        check("summary_failed + message_id", r["status"] == "summary_failed" and r["discord_message_id"],
+              f"{r['status']}/{r['discord_message_id']}")
+        srv.shutdown(); c.store.close(); os.remove(path)
+
+        # ③ 발송이 실패하면 '미완'으로 남고(누락 0), 재적재 때 LLM 없이 발송만 다시 시도한다.
+        c, srv, path = fresh()
+        c.notifier.fail_post = True
+        asyncio.run(run_once(c))
+        n, r = c.notifier, row(c)
+        check("발송 실패 → 미완 유지", r["status"] == "summarizing" and not r["discord_message_id"],
+              f"{r['status']}/{r['discord_message_id']}")
+        check("발송 실패에도 요약은 저장", bool(r["summary"]), "")
+        check("발송 실패 → 감시채널 디버그", any("발송 실패" in (e.get("title") or "") for e in n.debugs),
+              str([e.get("title") for e in n.debugs]))
+        srv.shutdown()                                   # LLM 서버를 끈다 → 재요약하면 실패할 환경
+        n.fail_post = False
+        check("재적재 1건", c.queue.requeue_pending(c.store) == 1, "")
+        asyncio.run(drain(c))
+        r = row(c)
+        check("재시도로 발송 완료(LLM 미사용)", r["status"] == "done" and r["discord_message_id"] == "m2",
+              f"{r['status']}/{r['discord_message_id']}")
+        check("요약문 유지", "테스트 요약입니다" in (r["summary"] or ""), r["summary"] or "")
+        c.store.close(); os.remove(path)
+
+        # ④ 끄면 기존 2단 발송(제목+링크 먼저 → 요약 도착 후 수정).
+        c, srv, path = fresh(after_summary=False)
+        asyncio.run(run_once(c))
+        n, r = c.notifier, row(c)
+        check("2단: POST 1·PATCH 1", len(n.posts) == 1 and len(n.patches) == 1,
+              f"posts={len(n.posts)} patches={len(n.patches)}")
+        check("2단: 1단 임베드엔 요약 없음", "테스트 요약입니다" not in n.posts[0]["description"], "")
+        check("2단: 수정 임베드에 요약", "테스트 요약입니다" in n.patches[0][1]["description"], "")
+        check("2단: done + message_id", r["status"] == "done" and r["discord_message_id"] == "m1",
+              f"{r['status']}/{r['discord_message_id']}")
+        srv.shutdown(); c.store.close(); os.remove(path)
+    finally:
+        config.SEND_AFTER_SUMMARY = old_flag
+
+
 if __name__ == "__main__":
     for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template, test_generic_options, test_plugins, test_ssupath_login, test_category_rename,
               test_diff_seed_new_limit, test_crawl_health, test_debug_message_shape, test_llm_client, test_llm_timeout_vs_disconnect, test_image_and_stream_errors,
-              test_run_once_e2e, test_debug_resummarize, test_model_autodetect,
+              test_run_once_e2e, test_send_after_summary, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
               test_subscribe_logic, test_dst_routing):
         try:

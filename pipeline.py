@@ -4,6 +4,8 @@ pipeline.py — 오케스트레이션.
 
 Components: 주입 가능한 구성요소 묶음(테스트에서 fake 교체). nosummary 플래그로 처리 깊이 조절.
 crawl_pass(): 전 학과 크롤 → 차집합 → (신규) seeded 기록 → 처리(발송/요약).
+발송 시점은 config.SEND_AFTER_SUMMARY: 기본은 요약 뒤 한 번에(발송 주체 = summarize/worker.py),
+꺼 두면 여기서 제목+링크를 먼저 보내고 요약이 오면 수정(2단).
 run_once():   부팅 재적재 + 1회 크롤 + 큐 드레인. --nosummary면 요약·재적재 생략(=시딩류).
 """
 import asyncio
@@ -13,6 +15,11 @@ import config
 from core import errors
 from core.crawl_health import CrawlHealth
 from crawl.diff import detect_new, FetchEmpty, TooManyNew
+
+
+def send_after_summary(c):
+    """요약이 끝난 뒤 한 번에 발송하는가? (요약을 안 하는 모드에서는 기다릴 게 없으니 즉시 발송)"""
+    return bool(config.SEND_AFTER_SUMMARY) and not c.nosummary
 
 
 def _label(dept):
@@ -46,8 +53,9 @@ class Components:
 async def _process_new_item(c, dept, item):
     """신규 1건 처리. --nosummary / 발송여부(dst)에 따라 깊이 조절.
       · nosummary + 발송안함(dst null): 순수 시딩 → 'seeded' 유지, 처리 안 함.
-      · nosummary + 발송함:            상세fetch 생략, D1(제목+링크)만 발송.
-      · 요약함:                        상세fetch → (발송 시)D1 → 요약큐.
+      · nosummary + 발송함:            상세fetch 생략, 제목+링크만 즉시 발송.
+      · 요약함:                        상세fetch → 요약큐 → (SEND_AFTER_SUMMARY면 워커가 발송,
+                                       아니면 여기서 제목+링크 먼저 발송하고 워커가 수정).
     """
     nosummary = c.nosummary
     send = c.notifier.send_enabled          # 보낼 의사(dst != null)
@@ -66,7 +74,7 @@ async def _process_new_item(c, dept, item):
     if nid is None:
         return None
 
-    if send:                                # 발송 대상(dst != null)
+    if send and not send_after_summary(c):  # 발송 대상(dst != null) + 2단 발송
         notice = await asyncio.to_thread(c.store.get_notice, nid)
         try:
             channel_id, message_id = await asyncio.to_thread(c.notifier.send_new, notice, dept)

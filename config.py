@@ -165,6 +165,13 @@ DISCORD_GUILD_ID = _get("DISCORD_GUILD_ID", "")
 DEBUG_GUILD_ID = _get("DEBUG_GUILD_ID", DISCORD_GUILD_ID)
 PROD_GUILD_ID = _get("PROD_GUILD_ID", "")
 DISCORD_CHANNEL_PREFIX = _get("DISCORD_CHANNEL_PREFIX", "")  # 학과 채널명 접두(선택)
+
+# 발송 시점. True(기본) = 요약이 끝난 뒤 '제목+요약+링크'를 한 번에 보낸다 → 폰 푸시 미리보기에
+#   요약이 그대로 보인다. False = 제목+링크를 먼저 보내고 요약이 오면 그 메시지를 수정(2단 발송).
+#   어느 쪽이든 공지가 누락되지는 않는다: 요약이 실패하면 실패 문구를 넣어 그대로 보내고,
+#   발송 전에 프로세스가 죽으면 공지는 '미완'으로 남아 다음 부팅 때 재적재된다(core/queue.py).
+#   요약을 기다리는 만큼 발송은 늦어진다(요약 1건 ≈ 수십 초, 상한 LLM_WALL_TIMEOUT).
+SEND_AFTER_SUMMARY = _get_bool("SEND_AFTER_SUMMARY", True)
 # 종류(kind)별 채널 카테고리 이름. major는 학과의 college(단과대) 이름을 쓴다.
 #   이름을 바꾸면 setup_guild가 새 카테고리를 만들지 않고 기존 카테고리의 이름을 바꾼다(권한·위치 유지).
 # general은 구독 화면의 이름으로도 쓴다("① 홍보센터 공지" 등) — 여기 하나만 바꾸면 전부 바뀐다.

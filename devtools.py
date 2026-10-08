@@ -23,8 +23,8 @@ def _find_notice_by_url(store, url):
 
 
 async def _reprocess(c, dept, title, url):
-    """전송(D1)은 즉시, 요약은 큐에 '적재만' 한다(드레인은 호출자가 일괄). 반환 nid.
-    → 여러 건을 돌릴 때 앞 건의 요약을 기다리지 않고 다음 건을 바로 전송(run과 동일 semantics)."""
+    """요약 큐에 '적재만' 한다(드레인은 호출자가 일괄). 반환 nid.
+    발송 시점은 run과 완전히 동일하다(_process_new_item 재사용 → config.SEND_AFTER_SUMMARY)."""
     await asyncio.to_thread(c.store.forget_url, dept["dept_id"], url)   # 새로 promote되게 비움
     return await _process_new_item(c, dept, {"title": title, "url": url})
 
@@ -80,14 +80,17 @@ async def debug_resummarize(c, n: int = 10, depts=None, exclude=(), per=1, rando
     if not picked:
         c.log("[redo] 재처리 대상을 찾지 못함(크롤 실패/빈 목록/ N=0).")
         return
-    c.log(f"[redo] {len(picked)}개: 먼저 전부 전송(D1) → 요약은 이어서 일괄 처리(전송이 요약을 안 기다림)")
-    # 1) 전송 먼저 — 앞 건의 요약 완료를 기다리지 않고 다음 건으로
+    from pipeline import send_after_summary
+    c.log(f"[redo] {len(picked)}개: " + ("요약 → 발송을 건별로 순차 처리(SEND_AFTER_SUMMARY)"
+                                        if send_after_summary(c) else
+                                        "먼저 전부 전송 → 요약은 이어서 일괄 처리(전송이 요약을 안 기다림)"))
+    # 1) 감지·적재(2단 발송 모드에서는 이 단계에서 전송까지 끝난다)
     for dept, top in picked:
         try:
             await _reprocess(c, dept, top["title"], top["url"])
         except Exception as e:
             c.log(f"[redo 처리 실패] {dept['dept_id']}: {e}")
-    # 2) 쌓인 요약을 일괄 드레인
+    # 2) 쌓인 요약을 일괄 드레인(SEND_AFTER_SUMMARY면 여기서 요약→발송)
     await drain(c)
     # 3) 결과 출력(요약 상태 확인)
     print("\n=== 재처리 결과 ===")

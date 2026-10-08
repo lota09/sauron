@@ -1,5 +1,14 @@
 # -*- coding: utf-8 -*-
-"""summarize/worker.py — 요약 워커 (이미지 준비 → LLM(텍스트+비전) → DB → 디스코드 edit). asyncio + to_thread."""
+"""summarize/worker.py — 요약 워커 (이미지 준비 → LLM(텍스트+비전) → DB → 디스코드). asyncio + to_thread.
+
+발송 시점은 config.SEND_AFTER_SUMMARY(pipeline.send_after_summary):
+  · True(기본): 요약이 끝난 뒤 '제목+요약+링크'를 여기서 **처음** 보낸다(폰 푸시에 요약이 보인다).
+  · False:      pipeline이 제목+링크를 먼저 보냈고, 여기서는 그 메시지를 수정한다(2단).
+누락 0 보장(True일 때): 요약 결과를 DB에 쓸 때 상태는 아직 '미완(summarizing)'으로 두고,
+  발송에 성공한 뒤에야 최종 상태(done/summary_failed/no_content)를 쓴다.
+  → 발송 전에 죽거나 디스코드 전송이 실패하면 그 공지는 '미완'으로 남아 다음 부팅 때 재적재된다
+    (core/queue.py requeue_pending). 요약이 이미 저장돼 있으면 LLM은 다시 부르지 않는다.
+"""
 import asyncio
 import json
 import time
@@ -8,6 +17,7 @@ import config
 from core import errors
 from summarize.llm import SummaryError, EmptyContentError
 from summarize.vision import to_data_url, HAVE_PIL
+from pipeline import send_after_summary
 
 
 async def summarize_one(c, notice_id: int):
@@ -16,6 +26,13 @@ async def summarize_one(c, notice_id: int):
     if not notice or notice.get("status") == "done":
         return
     dept = await asyncio.to_thread(c.store.get_dept, notice["dept_id"]) or {}
+
+    # 요약은 이미 끝났고 발송만 못 한 건(발송 직전에 죽었거나 디스코드 전송이 실패) → LLM 생략, 발송만.
+    if (notice.get("summary") or "").strip():
+        c.log(f"[발송 재시도] id={notice_id} 요약은 이미 있음 → 발송만 :: {notice['title'][:40]}")
+        await _publish(c, notice, dept, notice["summary"], notice.get("summary_engine"), "done", None)
+        return
+
     await asyncio.to_thread(c.store.set_status, notice_id, "summarizing")
 
     try:
@@ -69,42 +86,74 @@ async def summarize_one(c, notice_id: int):
     except Exception as e:
         err = e
 
-    async def _edit(status_notice):
-        try:
-            await asyncio.to_thread(c.notifier.edit_summary,
-                                    notice.get("discord_channel_id"), notice.get("discord_message_id"),
-                                    status_notice, dept)
-        except Exception as e:
-            c.log(f"[edit 실패] {notice['title'][:30]}: {e}")
-
+    # 결과를 (요약, 상태, 사유) 한 묶음으로 정리 → 발송·DB기록은 _publish 한 곳에서.
+    img_note = f" · 이미지 {len(data_urls)}/{len(images)}장·{kb}KB 입력" if images else ""
     if summary:
-        await asyncio.to_thread(c.store.set_summary, notice_id, summary, engine, None, "done")
-        await _edit(await asyncio.to_thread(c.store.get_notice, notice_id))
+        status, reason = "done", None
         # 이미지 입력 현황을 로그로 노출: 실제 LLM에 넣은 장수 / 추출 장수.
         #   (LLM이 그 이미지를 '이해'했는지는 여기서 알 수 없다 — 입력 여부만 확인 가능.)
         # 전송 페이로드 KB도 노출(서버가 큰 이미지를 조용히 버릴 때 진단용).
-        img_note = f" · 이미지 {len(data_urls)}/{len(images)}장·{kb}KB 입력" if images else ""
         c.log(f"[요약 완료] {engine} · {time.time() - t0:.1f}s · {len(summary)}자 :: "
               f"{notice['title'][:40]}{img_note}")
     elif no_content:
         # 제목만 있고 본문·이미지 모두 없음 → LLM에 안 보냄. '요약할 내용이 없습니다' 표기(재시도 X).
         # 실패가 아니므로 디버그 발송 안 함. 사유는 DB(fail_reason)에만 기록(사후 분석용).
-        await asyncio.to_thread(c.store.set_summary, notice_id, None, None, None,
-                                "no_content", "본문·이미지 없음 또는 이미지 로드 실패")
-        await _edit(await asyncio.to_thread(c.store.get_notice, notice_id))
+        status, reason = "no_content", "본문·이미지 없음 또는 이미지 로드 실패"
         c.log(f"[내용 없음] {notice['title'][:40]} (본문·이미지 모두 비어 LLM 호출 안 함)")
     else:
-        # 요약 실패 = 요약만 포기(알림은 이미 나감). 누락 0. 재시도 소진 → 영구 실패(재크롤/재부팅에도 재시도 X).
-        await asyncio.to_thread(c.store.set_summary, notice_id, None, None, None,
-                                "summary_failed", str(err)[:500])   # 사유 DB 기록
+        # 요약 실패 = 요약만 포기. 공지 자체는 실패 문구를 달고 그대로 간다(누락 0).
+        # 재시도 소진 → 영구 실패(재크롤/재부팅에도 재시도 X).
+        status, reason = "summary_failed", str(err)[:500]
         # 실패도 성공과 같은 정보량으로 남긴다(소요시간·입력 크기) — 사후에 '큰 요청만 죽는지'를
         # 로그만으로 가릴 수 있어야 하므로.
-        img_note = f" · 이미지 {len(data_urls)}/{len(images)}장·{kb}KB 입력" if images else ""
         c.log(f"[요약 실패] {time.time() - t0:.1f}s :: {notice['title'][:40]}{img_note}\n"
               f"          사유: {err}")
-        # SUMMARY_FAIL_NOTE 표시 + 감시채널 디버그. 디버그 발송은 notifier.edit_summary가 책임진다
-        # (실패 문구를 그리는 곳과 같은 자리 → 어떤 경로로 실패하든 알림이 빠지지 않는다).
-        await _edit(await asyncio.to_thread(c.store.get_notice, notice_id))
+    await _publish(c, notice, dept, summary, engine, status, reason)
+
+
+async def _publish(c, notice, dept, summary, engine, status, fail_reason):
+    """요약 결과를 DB에 쓰고 사용자에게 보여 준다 — 발송(요약 뒤 1회) 또는 기존 메시지 수정(2단).
+
+    SUMMARY_FAIL_NOTE('요약을 실패하였습니다')가 보이는 순간의 감시채널 디버그는 두 경로 모두
+    notifier가 책임진다(send_summarized / edit_summary) → 어떤 경로로 실패하든 알림이 빠지지 않는다.
+    """
+    nid = notice["id"]
+    # 이미 메시지가 나가 있으면(2단 모드 또는 발송 후 재적재) 수정, 아니면 지금 발송.
+    deferred = (send_after_summary(c) and c.notifier.send_enabled
+                and not notice.get("discord_message_id"))
+
+    if not deferred:
+        await asyncio.to_thread(c.store.set_summary, nid, summary, engine, None, status, fail_reason)
+        fresh = await asyncio.to_thread(c.store.get_notice, nid)
+        try:
+            await asyncio.to_thread(c.notifier.edit_summary,
+                                    fresh.get("discord_channel_id"), fresh.get("discord_message_id"),
+                                    fresh, dept)
+        except Exception as e:
+            c.log(f"[edit 실패] {notice['title'][:30]}: {e}")
+        return
+
+    # 요약 뒤 발송: 상태는 '미완(summarizing)'으로 두고 요약만 저장한다.
+    #   여기서 죽으면 다음 부팅 때 재적재되고, 요약이 있으니 LLM 없이 발송만 다시 시도한다.
+    await asyncio.to_thread(c.store.set_summary, nid, summary, engine, None, "summarizing", fail_reason)
+    out = dict(await asyncio.to_thread(c.store.get_notice, nid))
+    out["status"] = status                  # 임베드는 최종 상태로 그린다(실패/내용없음 문구 포함)
+    try:
+        channel_id, message_id = await asyncio.to_thread(c.notifier.send_summarized, out, dept)
+    except Exception as e:
+        # 공지를 '미완'으로 남겨 둔다 → 다음 부팅/재적재 때 다시 발송(요약은 재사용). 누락되지 않는다.
+        c.log(f"[발송 실패] {notice['title'][:40]}: {e}\n"
+              f"          → 요약은 저장됨. 이 공지는 '미완'으로 남아 다음 부팅 때 발송을 다시 시도한다")
+        try:
+            c.notifier.debug(f"**공지 발송 실패** · {dept.get('name_ko') or notice.get('dept_id') or '-'}\n"
+                             f"{(notice.get('title') or '')[:80]}\n"
+                             f"{errors.describe(e)}\n"
+                             f"요약은 저장됨 — 다음 부팅 때 발송을 다시 시도합니다")
+        except Exception as de:
+            c.log(f"[debug 전송 실패] {de}")
+        return
+    await asyncio.to_thread(c.store.set_notified, nid, channel_id, message_id)
+    await asyncio.to_thread(c.store.set_summary, nid, summary, engine, None, status, fail_reason)
 
 
 def _debug_unexpected(c, where, notice_id, e):
