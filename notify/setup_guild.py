@@ -6,11 +6,13 @@ notify/setup_guild.py — 학과별 역할 + 비공개 채널 자동 생성 (워
   - 역할(role): 학과명. 구독 = 이 역할 보유.
   - 학과 채널: @everyone 숨김 + 해당 역할만 '열람'. 전송은 봇/관리자만(역할 보유자도 전송 불가).
     단과대(college) 카테고리 아래. 기존 채널도 매 실행 시 권한·카테고리를 desired로 소급 갱신.
+    학과 이름·소속이 바뀌면(학교가 정한다) 채널·역할을 새로 만들지 않고 DB의 ID로 찾아 이름만 바꾼다.
   - developers 역할·카테고리(sauron 관리, 없으면 생성): mono/debug 채널을 developers 카테고리에 넣고
     'developers만 열람·봇/관리자만 전송'으로 소급. developers 역할ID는 app_meta에 저장(디버그 멘션용).
   - 통합공지(mono)·감시(debug) 채널ID도 app_meta에 저장 → 런타임(main)이 읽어 Notifier에 주입.
   - 생성/확인한 학과 역할·채널 ID를 depts 테이블에 동기화.
-멱등: DB ID가 아니라 '길드에 같은 이름의 역할/채널이 실제 있는지'로 판단(수동 삭제·재생성과 desync 방지).
+멱등: DB의 ID로 먼저 찾고(이름이 바뀌었으면 그 자리에서 rename), ID가 없거나 길드에서 사라졌으면
+      '같은 이름의 역할/채널이 실제 있는지'로 판단한다(수동 삭제·재생성과 desync 방지).
 소급: 학과 채널은 권한/카테고리(단과대), mono/debug는 권한/카테고리(developers)를 desired와 다를 때만 edit.
 merge: 소급 시 sauron '관리' overwrite(@everyone·해당 역할·developers·봇)만 덮고, 그 외 역할의
   overwrite는 보존. 관리자 전송은 Administrator가 overwrite를 무시하므로 자동 성립.
@@ -99,6 +101,38 @@ async def _rename_categories(depts, all_channels, find, cache):
         names.add(want)
 
 
+def _by_id(getter, raw):
+    """DB에 적힌 디스코드 ID로 조회. 값이 없거나 숫자가 아니거나 길드에서 사라졌으면 None."""
+    try:
+        return getter(int(str(raw).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _claim(cur, other, want, what, norm=lambda s: s):
+    """DB에 적힌 ID의 역할/채널을 먼저 쓰고, 이름이 달라졌으면 **그 자리에서 rename**한다.
+
+    학과 이름·소속은 학교가 정한다 → 'IT대학 정보보호학과'가 'AI대학 정보보호학과'가 되는 일이 생긴다.
+    이름으로만 찾으면 그때 기존 채널을 못 찾아 빈 채널을 새로 만들고(과거 공지 고아), 역할도 새로
+    만들어 기존 구독자가 조용히 채널을 잃는다. ID로 찾아 이름만 고치면 과거 공지·권한·구독이 그대로다.
+    ID가 없거나 사라졌으면 이름으로 찾는다(수동 삭제/재생성과의 desync 방지 — 이 파일의 원칙).
+    같은 이름의 다른 객체가 이미 있으면 rename하지 않고 경고만 한다(디스코드는 동명을 허용해서,
+    조용히 둘이 되면 이름 기반 조회가 깨진다). 이름이 같으면 아무것도 안 한다 → 멱등.
+    반환: 쓸 객체(둘 다 없으면 None)."""
+    if cur is None:
+        return other
+    if cur.name == norm(want):
+        return cur
+    if other is not None and other.id != cur.id:
+        print(f"[경고] '{want}' 이름의 다른 {what}이 이미 있음(id={other.id}) → DB의 {what}"
+              f"(id={cur.id}, 이름 '{cur.name}')을 그대로 쓰고 이름 변경은 건너뜀")
+        return cur
+    print(f"[{what} 이름 변경] {cur.name} → {want}" + (" (dry)" if DRY else ""))
+    if DRY:
+        return cur
+    return await cur.edit(name=want, reason="sauron: 학과 이름·소속 변경 소급") or cur
+
+
 async def _ensure_category(guild, name, cache):
     if name in cache:
         return cache[name]
@@ -175,6 +209,7 @@ async def run(gid):
             except Exception:
                 all_channels = list(getattr(guild, "channels", []))
             chs_by_name = {c.name: c for c in all_channels}      # c.name은 디스코드 정규화된 이름
+            chs_by_id = {c.id: c for c in all_channels}
 
             def _find(cname):
                 return chs_by_name.get(_norm_ch(cname)) or chs_by_name.get(cname)
@@ -190,7 +225,10 @@ async def run(gid):
 
                 # ── 역할: name_ko에서 단과대 뗀 이름으로 존재 확인 → 없으면 생성, 있으면 재사용 ──
                 rname = _role_name(d)      # 예: 'IT대학 AI융합학부' → 'AI융합학부'
-                role = roles_by_name.get(rname)
+                role = await _claim(_by_id(guild.get_role, d.get("discord_role_id")),
+                                    roles_by_name.get(rname), rname, "역할")
+                if role is not None:
+                    roles_by_name[role.name] = role
                 if role is None:
                     print(f"[역할 생성] {rname}" + (" (dry)" if DRY else ""))
                     if not DRY:
@@ -206,7 +244,10 @@ async def run(gid):
                 # ── 채널: 없으면 생성, 있으면 권한·카테고리 소급 갱신(열람=역할, 전송=관리자만) ──
                 #   채널 이름은 name_ko 그대로(단과대 카테고리로 그룹핑되므로).
                 chname = (config.DISCORD_CHANNEL_PREFIX + name)
-                ch = _find(chname)
+                ch = await _claim(_by_id(chs_by_id.get, d.get("discord_channel_id")),
+                                  _find(chname), chname, "채널", _norm_ch)
+                if ch is not None:
+                    chs_by_name[ch.name] = ch          # 이름이 바뀌었으면 조회 인덱스도 갱신
                 ow = _dept_overwrites(guild, role, me) if role else None
                 if ch is None:
                     print(f"[채널 생성] {college} / {chname}" + (" (dry)" if DRY else ""))

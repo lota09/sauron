@@ -1042,8 +1042,56 @@ def test_send_after_summary():
         config.SEND_AFTER_SUMMARY = old_flag
 
 
+def test_channel_role_rename():
+    """학과 이름·소속이 바뀌었을 때(학교가 정한다) 채널·역할을 새로 만들지 않고 이름만 바꾸는지."""
+    print("[test] 학과 이름 변경 — DB의 ID로 찾아 채널·역할 이름 소급(멱등)")
+    import asyncio as _a
+    import notify.setup_guild as sg
+
+    class Obj:
+        def __init__(self, i, name): self.id, self.name, self.edits = i, name, 0
+        async def edit(self, name, reason=None):
+            self.name = name; self.edits += 1; return self
+
+    old_sg_dry = sg.DRY
+    sg.DRY = False
+    try:
+        # ① ID로 찾은 역할의 이름이 바뀜 → rename(새로 만들지 않음)
+        role = Obj(11, "미디어경영학과")
+        got = _a.run(sg._claim(role, None, "디지털미디어학과", "역할"))
+        check("역할 이름 소급 변경", got is role and role.name == "디지털미디어학과" and role.edits == 1,
+              f"{role.name}/{role.edits}")
+        got = _a.run(sg._claim(role, None, "디지털미디어학과", "역할"))
+        check("두 번째 실행은 no-op(멱등)", role.edits == 1, str(role.edits))
+
+        # ② 채널은 디스코드 정규화 이름과 비교한다(공백→하이픈·소문자)
+        ch = Obj(21, "it대학-정보보호학과")
+        got = _a.run(sg._claim(ch, None, "IT대학 정보보호학과", "채널", sg._norm_ch))
+        check("정규화 이름이 같으면 안 바꿈", ch.edits == 0, str(ch.edits))
+        got = _a.run(sg._claim(ch, None, "AI대학 정보보호학과", "채널", sg._norm_ch))
+        check("소속 변경 → 채널 이름 소급", ch.name == "AI대학 정보보호학과" and ch.edits == 1,
+              f"{ch.name}/{ch.edits}")
+
+        # ③ 같은 이름의 다른 채널이 이미 있으면 rename하지 않고 DB의 것을 쓴다(동명 둘 방지)
+        mine, dup = Obj(31, "it대학-정보보호학과"), Obj(32, "ai대학-정보보호학과")
+        got = _a.run(sg._claim(mine, dup, "AI대학 정보보호학과", "채널", sg._norm_ch))
+        check("동명 충돌 시 경고만·DB것 유지", got is mine and mine.edits == 0, f"{got.id}/{mine.edits}")
+
+        # ④ ID가 없거나 길드에서 사라졌으면 이름으로 찾은 것을 쓴다(기존 동작 보존)
+        byname = Obj(41, "ai대학-ai소프트웨어학부")
+        check("ID 없음 → 이름으로 찾은 것", _a.run(sg._claim(None, byname, "AI대학 AI소프트웨어학부", "채널", sg._norm_ch)) is byname, "")
+        check("둘 다 없으면 None", _a.run(sg._claim(None, None, "새 학과", "채널", sg._norm_ch)) is None, "")
+
+        # ⑤ _by_id: 빈 값·쓰레기 값·없는 ID는 None(크래시 금지)
+        pool = {31: mine}
+        check("_by_id 정상", sg._by_id(pool.get, "31") is mine, "")
+        check("_by_id 빈값·오류값", all(sg._by_id(pool.get, v) is None for v in (None, "", "abc", "99")), "")
+    finally:
+        sg.DRY = old_sg_dry
+
+
 if __name__ == "__main__":
-    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template, test_generic_options, test_plugins, test_ssupath_login, test_category_rename,
+    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template, test_generic_options, test_plugins, test_ssupath_login, test_category_rename, test_channel_role_rename,
               test_diff_seed_new_limit, test_crawl_health, test_debug_message_shape, test_llm_client, test_llm_timeout_vs_disconnect, test_image_and_stream_errors,
               test_run_once_e2e, test_send_after_summary, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
