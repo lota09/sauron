@@ -1,0 +1,16 @@
+{
+    auto_https disable_redirects
+    # 공유기가 외부 443 → 이 기기 8443 으로 넘긴다. Caddy는 https 포트를 8443으로 알고 있어야
+    # TLS-ALPN 인증(외부 443으로 들어옴)을 이 리스너에서 처리한다.
+    https_port 8443
+}
+
+your-domain.example.com {
+    tls {
+        issuer acme {
+            # 80번은 열 수 없음(포트포워딩 없음·특권 포트) → HTTP 인증은 시도조차 하지 않고 TLS-ALPN만 쓴다
+            disable_http_challenge
+        }
+    }
+    reverse_proxy localhost:8765
+}

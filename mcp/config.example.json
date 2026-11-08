@@ -1,0 +1,11 @@
+{
+  "db_path": "../db/notice.db",
+  "host": "127.0.0.1",
+  "port": 8765,
+  "api_key": "여기에 긴 랜덤 문자열 — python3 -c \"import secrets;print('srn_'+secrets.token_urlsafe(32))\"",
+  "crawl_interval_sec": 600,
+  "allowed_hosts": [
+    "example.your-ddns.com"
+  ],
+  "max_body_bytes": 65536
+}

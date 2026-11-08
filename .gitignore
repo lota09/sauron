@@ -30,3 +30,6 @@ logs/
 
 # 일회성 공지 스크립트(개발자 ID 하드코딩)
 experiments/announce.py
+
+# MCP 서버 — 비밀키 설정(예시는 커밋)
+mcp/config.json
