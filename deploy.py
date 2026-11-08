@@ -22,6 +22,9 @@ setup_guild 진행 '아니오')은 실패가 아니라 건너뛰기로 계속 �
   5) setup_guild --dry → 만들 게 있거나 app_meta가 비었으면(--check) 실제 실행
        ★ '길드에 다 있음'과 'DB에 기록됨'은 다른 문제다. 후자가 비면 런타임이 감시채널을 못 찾는다.
   6) 시딩: main.py once --dst null --nosummary (현재 공지를 '본 것'으로 기록, 무발송)
+  6b) MCP 서버(선택, 기본 아니오): mcp/.venv 생성·의존성 설치 + mcp/config.json(API 키·공개 도메인).
+       이미 있으면 재사용. 이걸 해 둬야 [7]에서 sauron:mcp 가 함께 등록된다.
+       HTTPS 앞단(Caddy)·공유기 포트포워딩은 범위 밖 — mcp/deploy/ 의 예시 참고.
   7) 서비스 등록(선택): systemd / supervisor / 안 함(기본).
        설정파일은 이 스크립트의 절대경로·현재 계정으로 채워 넣고, 이미 있으면 덮어쓴다.
        서비스 = crawler(수집·요약·발송) · discord(구독 봇) · mcp(공지 MCP 서버, mcp/ 세팅 시에만).
@@ -210,11 +213,60 @@ def step_setup_guild(py, can_run):
         print("    → 사용자 선택으로 건너뜀(실패 아님). 나중에: python -m notify.setup_guild")
 
 
+def _unseeded_depts():
+    """시딩 안 된 활성 학과 수. DB가 없거나 읽을 수 없으면 None."""
+    import sqlite3
+    path = os.path.join(ROOT, "db", "notice.db")
+    if not os.path.exists(path):
+        return None
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            return conn.execute("SELECT COUNT(*) FROM depts WHERE active = 1 AND seeded_at IS NULL").fetchone()[0]
+    except sqlite3.Error:
+        return None
+
+
 def step_seed_notices(py):
     print("\n[6] 시딩 (main.py once --dst null --nosummary) — 현재 공지를 '본 것'으로 기록, 무발송")
+    if _unseeded_depts() == 0:
+        # 다른 기기에서 notice.db를 옮겨 온 경우 등. 여기서 once를 돌리면 '옮기는 동안 새로 올라온 공지'까지
+        # 무발송으로 '본 것'이 되어 누락된다 → 건너뛰고, 운영 시작 후 크롤러가 신규로 처리하게 둔다.
+        print("    → 모든 활성 학과가 이미 시딩됨 → 건너뜀 (그사이 올라온 공지는 운영 시작 후 신규로 발송)")
+        return
     r = run([py, "main.py", "once", "--dst", "null", "--nosummary"], cwd=ROOT)
     if r.returncode != 0:
         die("시딩(once) 실패(네트워크/사이트 확인).")
+
+
+def step_mcp():
+    """MCP 서버는 선택 기능 — 전용 venv(크롤러 의존성과 분리)와 config.json(키)을 만든다. 멱등."""
+    have = _mcp_ready()
+    if not yn(f"\n[6b] MCP 서버(공지를 AI 도구에서 조회)도 세팅할까요?{' (이미 세팅됨)' if have else ''}", have):
+        print("    → 건너뜀(실패 아님)")
+        return
+    vdir = os.path.join(MCP_DIR, ".venv")
+    if not os.path.exists(MCP_PY):
+        r = run([sys.executable, "-m", "venv", vdir])
+        if r.returncode != 0 or not os.path.exists(MCP_PY):
+            die("mcp/.venv 생성 실패 (python3-venv 필요)")
+    r = run([MCP_PY, "-m", "pip", "install", "-r", os.path.join(MCP_DIR, "requirements.txt")])
+    if r.returncode != 0:
+        die("MCP 의존성 설치 실패 — 로그 확인 후 재실행하세요.")
+
+    path = os.path.join(MCP_DIR, "config.json")
+    cfg = load_json(path) or load_json(os.path.join(MCP_DIR, "config.example.json"))
+    key = cfg.get("api_key", "")
+    if not key.startswith("srn_"):            # 예시 문구 그대로면 새로 만든다
+        import secrets
+        key = "srn_" + secrets.token_urlsafe(32)
+        print("    → API 키 새로 생성 (기존 서버에서 옮겨 오는 중이면 그 키를 넣어야 테스터 설정이 그대로 유지됩니다)")
+    cfg["api_key"] = ask("    API 키", key, secret=True)
+    hosts = [h for h in cfg.get("allowed_hosts", []) if "example" not in h]
+    domain = ask("    외부 공개 도메인(없으면 Enter — 이 기기 안에서만 사용)", hosts[0] if hosts else "")
+    cfg["allowed_hosts"] = [domain] if domain else []
+    write_json(path, cfg)
+    os.chmod(path, 0o600)
+    print("    → mcp/config.json 저장(권한 600). [7]에서 sauron:mcp 로 등록됩니다.")
 
 
 # ── 서비스 등록(systemd / supervisor) ────────────────
@@ -424,6 +476,7 @@ def main():
     step_db(py)                 # setup_guild가 depts 테이블을 읽으므로 먼저
     step_setup_guild(py, can_guild)
     step_seed_notices(py)
+    step_mcp()                  # 선택 — 해 두면 [7]에서 sauron:mcp 도 등록
     step_service(py, using_venv)
     step_restart_running()      # 이미 떠 있으면 새 코드·플러그인을 불러오게
     step_done(py, using_venv)
