@@ -24,6 +24,8 @@ setup_guild 진행 '아니오')은 실패가 아니라 건너뛰기로 계속 �
   6) 시딩: main.py once --dst null --nosummary (현재 공지를 '본 것'으로 기록, 무발송)
   7) 서비스 등록(선택): systemd / supervisor / 안 함(기본).
        설정파일은 이 스크립트의 절대경로·현재 계정으로 채워 넣고, 이미 있으면 덮어쓴다.
+       서비스 = crawler(수집·요약·발송) · discord(구독 봇) · mcp(공지 MCP 서버, mcp/ 세팅 시에만).
+       supervisor에서는 sauron 그룹으로 묶여 sauron:crawler · sauron:discord · sauron:mcp 로 보인다.
   8) `main.py run --dst poly` 는 실행하지 않고 안내만.
 
 표준 라이브러리만 사용. 대상(POSIX) 기준.
@@ -218,6 +220,24 @@ def step_seed_notices(py):
 # ── 서비스 등록(systemd / supervisor) ────────────────
 SYSTEMD_DIR = "/etc/systemd/system"
 SUPERVISOR_DIR = "/etc/supervisor/conf.d"
+MCP_DIR = os.path.join(ROOT, "mcp")
+MCP_PY = os.path.join(MCP_DIR, ".venv", "bin", "python")
+
+
+def _mcp_ready():
+    """MCP 서버는 선택 기능 — mcp/ 에 전용 venv와 config.json(키)을 만들어 둔 경우에만 서비스로 등록한다."""
+    return os.path.exists(MCP_PY) and os.path.exists(os.path.join(MCP_DIR, "config.json"))
+
+
+def _services():
+    """(이름, 설명, 실행 명령, 작업 디렉터리). crawler·discord는 sauron.sh --fg, mcp는 자체 venv로 직접 실행.
+    mcp는 DB를 읽기만 하는 별개 프로세스라 기동 순서 의존이 없고, nice 10으로 크롤러·LLM보다 양보한다."""
+    sh = os.path.join(ROOT, "sauron.sh")
+    svcs = [("crawler", "공지 크롤러(수집·요약·디스코드 발송)", f"{sh} --fg --nobot", ROOT),
+            ("discord", "디스코드 구독 봇", f"{sh} --fg --bot", ROOT)]
+    if _mcp_ready():
+        svcs.append(("mcp", "공지 MCP 서버(읽기 전용, 127.0.0.1)", f"/usr/bin/nice -n 10 {MCP_PY} server.py", MCP_DIR))
+    return svcs
 
 
 def _is_root():
@@ -249,7 +269,7 @@ def _write_root(path, content):
                           stdout=subprocess.DEVNULL).returncode == 0
 
 
-def _systemd_unit(desc, args, user, venv):
+def _systemd_unit(desc, command, workdir, user, venv):
     """경로·계정·venv 이름을 현재 배포 실체에 맞춰 박아 넣는다."""
     return f"""[Unit]
 Description={desc}
@@ -259,10 +279,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 User={user}
-WorkingDirectory={ROOT}
+WorkingDirectory={workdir}
 Environment=VENV_DIR={venv}
 Environment=PYTHONUNBUFFERED=1
-ExecStart={os.path.join(ROOT, "sauron.sh")} {args}
+ExecStart={command}
 Restart=always
 RestartSec=10
 KillMode=mixed
@@ -274,15 +294,13 @@ WantedBy=multi-user.target
 
 
 def _supervisor_conf(user, venv):
-    sh = os.path.join(ROOT, "sauron.sh")
-
-    def prog(name, args, desc):
+    def prog(name, desc, command, workdir):
         return f"""[program:{name}]
 ; {desc}
-command={sh} {args}
-directory={ROOT}
+command={command}
+directory={workdir}
 user={user}
-environment=VENV_DIR="{venv}",PYTHONUNBUFFERED="1"
+environment=HOME="{os.path.expanduser('~' + user)}",VENV_DIR="{venv}",PYTHONUNBUFFERED="1"
 autostart=true
 autorestart=true
 startsecs=10
@@ -292,25 +310,24 @@ stopwaitsecs=30
 stopasgroup=true
 killasgroup=true
 redirect_stderr=true
-stdout_logfile=/var/log/supervisor/{name}.log
+stdout_logfile=/var/log/supervisor/sauron-{name}.log
 stdout_logfile_maxbytes=10MB
 stdout_logfile_backups=5
 """
 
-    return (f"; sauron — deploy.py 자동 생성 (경로/계정은 배포 위치 기준)\n\n"
-            + prog("sauron-crawler", "--fg --nobot", "공지 크롤러") + "\n"
-            + prog("sauron-bot", "--fg --bot", "구독 봇") + "\n"
-            + "[group:sauron]\nprograms=sauron-crawler,sauron-bot\n")
+    svcs = _services()
+    return (f"; sauron — deploy.py 자동 생성 (경로/계정은 배포 위치 기준)\n"
+            f"; supervisorctl 에서 sauron:<이름> 으로 보인다. 그룹 전체: sauron:*\n\n"
+            + "\n".join(prog(*s) for s in svcs) + "\n"
+            + f"[group:sauron]\nprograms={','.join(s[0] for s in svcs)}\n")
 
 
 def _install_systemd(user, venv):
     if not shutil.which("systemctl"):
         print("    ⚠ systemctl 없음(이 시스템은 systemd가 아님) → 등록 건너뜀.")
         return
-    units = {
-        "sauron-crawler.service": _systemd_unit("sauron 공지 크롤러", "--fg --nobot", user, venv),
-        "sauron-bot.service": _systemd_unit("sauron 구독 봇", "--fg --bot", user, venv),
-    }
+    units = {f"sauron-{name}.service": _systemd_unit(f"sauron {desc}", command, workdir, user, venv)
+             for name, desc, command, workdir in _services()}
     for name, body in units.items():
         path = os.path.join(SYSTEMD_DIR, name)
         had = os.path.exists(path)
@@ -321,8 +338,8 @@ def _install_systemd(user, venv):
         die("systemctl daemon-reload 실패.")
     run(_sudo(["systemctl", "enable", "--now"] + list(units)))
     run(_sudo(["systemctl", "--no-pager", "--lines=0", "status"] + list(units)))
-    print("    관리: sudo systemctl status|restart|stop sauron-crawler sauron-bot")
-    print("    로그: journalctl -u sauron-crawler -f   (앱 로그는 logs/sauron.log · logs/bot.log)")
+    print(f"    관리: sudo systemctl status|restart|stop {' '.join(u[:-8] for u in units)}")
+    print("    로그: journalctl -u sauron-crawler -f   (앱 로그는 logs/sauron.log · logs/bot.log · mcp/logs/mcp.log)")
 
 
 def _install_supervisor(user, venv):
@@ -338,8 +355,8 @@ def _install_supervisor(user, venv):
         die("supervisorctl reread 실패 — supervisord 미기동일 수 있음: sudo systemctl start supervisor")
     run(_sudo(["supervisorctl", "update"]))          # autostart=true → 여기서 기동
     run(_sudo(["supervisorctl", "status", "sauron:*"]))
-    print("    관리: sudo supervisorctl status|restart|stop sauron:   (그룹은 콜론 필수)")
-    print("    로그: /var/log/supervisor/sauron-*.log   (앱 로그는 logs/sauron.log · logs/bot.log)")
+    print("    관리: sudo supervisorctl status|restart|stop sauron:   (그룹은 콜론 필수 · 개별은 sauron:mcp 등)")
+    print("    로그: /var/log/supervisor/sauron-*.log   (앱 로그는 logs/sauron.log · logs/bot.log · mcp/logs/mcp.log)")
 
 
 def step_service(py, using_venv):
@@ -380,7 +397,7 @@ def step_restart_running():
     if os.path.exists(os.path.join(SUPERVISOR_DIR, "sauron.conf")) and shutil.which("supervisorctl"):
         run(_sudo(["supervisorctl", "restart", "sauron:"]))
     elif os.path.exists(os.path.join(SYSTEMD_DIR, "sauron-crawler.service")):
-        run(_sudo(["systemctl", "restart", "sauron-crawler", "sauron-bot"]))
+        run(_sudo(["systemctl", "restart"] + [f"sauron-{name}" for name, *_ in _services()]))
     else:
         run(["bash", os.path.join(ROOT, "sauron.sh"), "restart"])
 
@@ -393,7 +410,7 @@ def step_done(py, using_venv):
     print("    로그: logs/sauron.log(크롤러) · logs/bot.log(봇) — 자정마다 회전")
     print()
     print("  [7]에서 systemd/supervisor 에 등록했다면 그쪽이 이미 띄우고 있으니 sauron.sh start 로 중복 기동하지 마세요")
-    print("  (상태 확인은 systemctl status sauron-crawler sauron-bot / supervisorctl status sauron: 로).")
+    print("  (상태 확인은 systemctl status 'sauron-*' / supervisorctl status sauron: 로).")
     print("  등록을 건너뛰었다면 나중에 deploy.py 를 다시 돌려 [7]만 진행하면 됩니다.")
 
 

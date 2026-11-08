@@ -17,8 +17,9 @@
 #   bash sauron.sh --fg --bot        봇만(마찬가지로 exec).
 #   포어그라운드에선 nohup/disown/pid파일 잠금을 쓰지 않고 stdout/stderr 도 막지 않는다(supervisor 가 수집).
 #
-#   supervisor 예시 — 크롤러·봇을 따로 재시작하려면 아래처럼 program 을 둘로 나누는 쪽을 권장:
-#     [program:sauron-crawler]
+#   supervisor 예시 — 크롤러·봇을 따로 재시작하려면 아래처럼 program 을 둘로 나누는 쪽을 권장
+#   (deploy.py [7]이 이 형태로 생성: sauron:crawler · sauron:discord · sauron:mcp):
+#     [program:crawler]
 #     command=/opt/sauron/sauron.sh --fg --nobot
 #     directory=/opt/sauron
 #     autostart=true
@@ -27,7 +28,7 @@
 #     stopasgroup=true
 #     killasgroup=true
 #
-#     [program:sauron-bot]
+#     [program:discord]
 #     command=/opt/sauron/sauron.sh --fg --bot
 #     ...(동일)
 #   한 program 으로 묶으려면 command=/opt/sauron/sauron.sh --fg (둘 중 하나 죽으면 같이 내려가고 통째로 재시작된다)
