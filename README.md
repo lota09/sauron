@@ -5,7 +5,7 @@
 
 - 철학: 초저비용 · 무외부의존 · 온디바이스(단일 기기) · 누락 0 우선
 - 개발: Windows 11 x86 / 타겟: Note20 Ultra(chroot Ubuntu) 또는 S21(proot Ubuntu), ARM
-- 요약 LLM: OpenAI 호환 엔드포인트(개발 `http://192.168.50.153:8000/v1`, 배포 시 localhost)
+- 요약 LLM: OpenAI 호환 엔드포인트(개발 `http://192.168.50.153:8000/v1`, 배포 시 localhost:8080, 실패 시 Google AI Studio 무료 모델로 폴백)
 - 표준 asyncio + requests + bs4 만 사용(aiohttp/openai/apscheduler 불필요)
 
 ## 설치

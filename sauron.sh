@@ -39,6 +39,12 @@ cd "$(dirname "$0")"
 
 VENV_DIR="${VENV_DIR:-.venv}"
 PY="./$VENV_DIR/bin/python"
+# OCR(MNN Vulkan)은 런타임에 dlopen("libvulkan.so")로 연다 — Debian엔 개발 패키지 없이 libvulkan.so.1 뿐이라
+# venv 안 심볼릭 링크(deploy/수동: ln -s /usr/lib/aarch64-linux-gnu/libvulkan.so.1 .venv/vklib/libvulkan.so)를
+# 로더 경로에 넣는다. 프로세스 시작 시점에만 읽히므로 python 안에서 os.environ 으로는 안 된다.
+if [ -d "./$VENV_DIR/vklib" ]; then
+  export LD_LIBRARY_PATH="$PWD/$VENV_DIR/vklib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 PID_DIR=".run"
 mkdir -p "$PID_DIR" logs
 

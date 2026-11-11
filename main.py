@@ -39,7 +39,7 @@ from db.store import Store
 from notify.notifier import Notifier
 from pipeline import Components, crawl_pass, run_once
 from summarize.llm import default_summarizer
-from summarize.worker import worker_loop
+from summarize.worker import start_workers
 
 
 def build_components(logger=None, dst="null", nosummary=False):
@@ -49,12 +49,20 @@ def build_components(logger=None, dst="null", nosummary=False):
     try:
         model = summarizer.ensure_model()
         logger.info(f"[LLM] 사용 모델: {model} @ {config.LLM_BASE_URL}")
+        cloud = getattr(summarizer, "cloud", None)
+        logger.info(f"[LLM] 클라우드 폴백: {cloud.model + ' @ ' + cloud.base_url if cloud else '꺼짐(LLM_CLOUD_API_KEY 없음)'}")
     except Exception as e:
         logger.info(f"[LLM] 모델 확인 실패({e}) → {summarizer.model}")
     # 통합·감시 채널ID는 DB(app_meta)에서만 읽는다 — setup_guild가 생성·저장한 값.
     dbg_ch = store.get_meta("debug_channel_id")
     mono_ch = store.get_meta("mono_channel_id")
     notifier = Notifier(logger, dst=dst, debug_channel_id=dbg_ch, mono_channel_id=mono_ch)
+    if hasattr(summarizer, "on_fallback"):          # 클라우드 폴백 성공 → 감시채널에 알림
+        def _on_fallback(title, reason, engine, secs):
+            notifier.debug(f"**요약 클라우드 폴백** · {engine} · {secs:.1f}s\n"
+                           f"{(title or '')[:80]}\n"
+                           f"로컬 실패 사유: `{reason[:300]}`")
+        summarizer.on_fallback = _on_fallback
     # 채널ID는 값 자체를 남긴다 — '설정/없음'만 남기면 나중에 "어디로 보냈나"를 로그로 못 따라간다.
     logger.info(f"[전송] dst={notifier.dst} dry={notifier.dry} nosummary={nosummary} "
                 f"통합채널={mono_ch or '없음'} 감시채널={dbg_ch or '없음'}")
@@ -77,8 +85,8 @@ async def _run_forever(c):
     n = c.queue.requeue_pending(c.store)
     if n:
         c.log(f"[부팅 재적재] 미완 요약 {n}건")
-    workers = [asyncio.create_task(worker_loop(c)) for _ in range(config.LLM_MAX_CONCURRENCY)]
-    c.log(f"[start] 워커 {len(workers)}개 · 크롤주기 {config.CRAWL_INTERVAL_SEC}s · LLM {config.LLM_BASE_URL}")
+    workers = start_workers(c)
+    c.log(f"[start] 워커 router 1 · OCR 1({'on ' + config.OCR_BACKEND if config.OCR_ENABLE else 'off'}) · LLM {config.LLM_MAX_CONCURRENCY} · 크롤주기 {config.CRAWL_INTERVAL_SEC}s · LLM {config.LLM_BASE_URL}")
     record_start(c.store)          # 상태확인용: run_pid·시작시각 기록
     try:
         while True:
@@ -186,4 +194,6 @@ def main():
 
 
 if __name__ == "__main__":
+    from core import vkpath
+    vkpath.ensure()        # OCR Vulkan 로더 경로(sauron.sh 밖에서 직접 실행할 때)
     main()

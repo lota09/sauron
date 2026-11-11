@@ -1090,12 +1090,70 @@ def test_channel_role_rename():
         sg.DRY = old_sg_dry
 
 
+def test_ocr_fallback_routing():
+    """OCR 텍스트 프롬프트 첨부 · OCR 판독 실패 시 로컬 생략→클라우드 비전 · 클라우드 없으면 이미지 제외."""
+    print("[test] OCR 텍스트 첨부 / 로컬 생략 폴백")
+    from summarize.llm import _ocr_block, FallbackSummarizer, EmptyContentError
+    from summarize import worker as W
+
+    blk, n = _ocr_block(["", "  행사 일시 | 12월 3일  ", "장소 | 형남공학관"])
+    check("OCR 블록: 빈 장 생략·번호 유지", n == 2 and "[첨부 이미지 2 OCR]" in blk and "[첨부 이미지 1 OCR]" not in blk, blk)
+    old = config.OCR_MAX_CHARS
+    config.OCR_MAX_CHARS = 5
+    blk2, _ = _ocr_block(["가나다라마바사"])
+    config.OCR_MAX_CHARS = old
+    check("OCR 블록: 총 글자 상한", blk2.strip().endswith("가나다라마") and "바" not in blk2, blk2)
+
+    calls = []
+
+    class Fake:
+        def __init__(self, name):
+            self.name, self.model, self.base_url = name, name, "x"
+
+        def ensure_model(self):
+            return self.model
+
+        def summarize(self, title, html, image_urls=None, ocr_texts=None):
+            calls.append((self.name, bool(image_urls), ocr_texts))
+            if self.name == "local" and not html and not ocr_texts and not image_urls:
+                raise EmptyContentError("empty")
+            return f"- {self.name} 요약임", self.name
+
+    fb = FallbackSummarizer(Fake("local"), Fake("cloud"))
+    vision_old = config.LLM_VISION
+    config.LLM_VISION = False
+    try:
+        calls.clear()
+        t, e = fb.summarize("제목", "<p>본문</p>", ["data:x"], ocr_texts=["OCR글자"])
+        check("OCR 성공: 로컬이 OCR 텍스트로(이미지 미첨부)", e == "local" and calls == [("local", False, ["OCR글자"])], calls)
+        calls.clear()
+        t, e = fb.summarize("제목", "<p>본문</p>", ["data:x"], skip_local=True, skip_reason="OCR 판독 실패")
+        check("OCR 판독 실패: 로컬 생략 → 클라우드 비전", e == "cloud:cloud" and calls == [("cloud", True, None)], calls)
+        calls.clear()
+        t, e = fb.summarize("제목", "", ["data:x"], ocr_texts=None)
+        check("본문·OCR 없고 이미지뿐: 클라우드로", e == "cloud:cloud" and calls[-1] == ("cloud", True, None), calls)
+        calls.clear()
+        try:
+            fb.summarize("제목", "", None)
+            ok = False
+        except EmptyContentError:
+            ok = True
+        check("진짜 내용 없음은 그대로 EmptyContent", ok and calls == [("local", False, None)], calls)
+
+        calls.clear()
+        loc = Fake("local")
+        W._call_summarizer(loc, "제목", "<p>본문</p>", ["data:x"], {"ocr_texts": None, "skip_local": True})
+        check("클라우드 없음: 로컬에 이미지 안 보냄·skip_local 무시", calls == [("local", False, None)], calls)
+    finally:
+        config.LLM_VISION = vision_old
+
+
 if __name__ == "__main__":
     for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template, test_generic_options, test_plugins, test_ssupath_login, test_category_rename, test_channel_role_rename,
               test_diff_seed_new_limit, test_crawl_health, test_debug_message_shape, test_llm_client, test_llm_timeout_vs_disconnect, test_image_and_stream_errors,
               test_run_once_e2e, test_send_after_summary, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
-              test_subscribe_logic, test_dst_routing):
+              test_subscribe_logic, test_dst_routing, test_ocr_fallback_routing):
         try:
             t()
         except Exception as e:

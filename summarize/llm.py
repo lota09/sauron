@@ -350,6 +350,9 @@ class OpenAICompatSummarizer:
                     log.warning("[LLM 실패] %.1fs · HTTP %s · %s", time.time() - start,
                                 r.status_code, _err_message(r)[:200])
                     raise _classify_http(r.status_code, _err_message(r))
+                # SSE(text/event-stream)에 charset이 없으면 requests가 ISO-8859-1로 디코딩해 한글이 깨진다
+                # (llama.cpp 서버·Gemini API 모두 해당). SSE 규격상 항상 UTF-8.
+                r.encoding = "utf-8"
                 for line in r.iter_lines(decode_unicode=True):
                     if SHUTDOWN.is_set():                          # 종료 신호 → 즉시 스트림 중단
                         stop = "종료신호"
@@ -479,20 +482,123 @@ class OpenAICompatSummarizer:
                 log.warning("[LLM 포기] 재시도 소진(또는 종료신호) · 누적사유: %s", " / ".join(reasons))
                 raise SummaryError(" / ".join(reasons))
 
-    def summarize(self, title, content_html, image_urls=None):
-        """요약. 텍스트 프롬프트 하나에 (있으면) 이미지를 함께 첨부해 넘긴다(비전 전용 프롬프트 X).
-        본문·이미지가 모두 없을 때만 EmptyContentError. engine은 이미지 첨부 시 'vision:<model>×N'."""
+    def summarize(self, title, content_html, image_urls=None, ocr_texts=None):
+        """요약. 텍스트 프롬프트 하나에 (있으면) 이미지·OCR 텍스트를 함께 넘긴다(비전 전용 프롬프트 X).
+        ocr_texts: 장별 OCR 텍스트 — 본문 뒤에 '[첨부 이미지 N OCR]' 블록으로 붙인다(빈 장은 생략).
+        본문·이미지·OCR 이 모두 없을 때만 EmptyContentError.
+        engine: 이미지 첨부 시 'vision:<model>×N', OCR 텍스트 사용 시 'ocr:<model>×N'."""
         self.ensure_model()
         body = html_to_text(content_html)
-        if not body.strip() and not image_urls:
+        ocr_block, n_ocr = _ocr_block(ocr_texts)
+        if not body.strip() and not image_urls and not ocr_block:
             raise EmptyContentError("본문·이미지 모두 없음")
         base = self._compose_prompt(title, body)
+        if ocr_block:
+            base += ocr_block + config.LLM_OCR_HINT
         if image_urls:
             base += config.LLM_VISION_HINT      # 이미지 있을 때만 '포스터를 읽어라' 지시 추가
         text, model = self._generate(base, image_urls=image_urls or None)
-        engine = f"vision:{model}×{len(image_urls)}" if image_urls else model
+        if image_urls:
+            engine = f"vision:{model}×{len(image_urls)}"
+        elif n_ocr:
+            engine = f"ocr:{model}×{n_ocr}"
+        else:
+            engine = model
         return text, engine
 
 
+def _ocr_block(ocr_texts):
+    """OCR 텍스트 → 프롬프트 블록(총 OCR_MAX_CHARS 상한). (블록, 실제로 붙인 장 수)."""
+    if not ocr_texts:
+        return "", 0
+    budget = config.OCR_MAX_CHARS
+    parts, n = [], 0
+    for i, t in enumerate(ocr_texts, 1):
+        t = (t or "").strip()
+        if not t or budget <= 0:
+            continue
+        t = t[:budget]
+        budget -= len(t)
+        parts.append(f"[첨부 이미지 {i} OCR]\n{t}")
+        n += 1
+    return ("\n\n" + "\n\n".join(parts) if parts else ""), n
+
+
+class FallbackSummarizer:
+    """로컬 요약기가 최종 실패(SummaryError)하면 클라우드(Google AI Studio 무료 모델)로 한 번 더 요약.
+    EmptyContentError(내용 없음)는 어디로 보내도 같으므로 폴백하지 않는다.
+    engine 은 클라우드 결과일 때 'cloud:<model>' 접두로 남겨 DB/디스코드에서 구분되게 한다."""
+
+    def __init__(self, local, cloud, on_fallback=None):
+        self.local = local
+        self.cloud = cloud
+        # 클라우드 폴백이 '성공'했을 때 호출: on_fallback(title, local_reason, engine, seconds).
+        #   build_components가 감시채널 디버그 발송을 꽂는다. 클라우드까지 실패하면 호출하지 않는다 —
+        #   그때는 worker가 기존 '요약 실패' 디버그를 보내며, 사유에 로컬·클라우드가 함께 담긴다(중복 방지).
+        self.on_fallback = on_fallback
+
+    # main.py 등은 단일 요약기처럼 model/base_url/ensure_model 을 쓴다 → 로컬 값을 노출.
+    @property
+    def model(self):
+        return self.local.model
+
+    @property
+    def base_url(self):
+        return self.local.base_url
+
+    def ensure_model(self):
+        try:
+            return self.local.ensure_model()
+        except Exception:
+            return self.local.model
+
+    def summarize(self, title, content_html, image_urls=None, ocr_texts=None,
+                  skip_local=False, skip_reason=None):
+        """로컬: 이미지는 LLM_VISION 일 때만 첨부, OCR 텍스트는 항상. 클라우드(폴백): 이미지 첨부(비전).
+        skip_local: OCR 판독 실패 등 로컬로는 이미지 내용을 못 읽는 경우 → 로컬을 건너뛰고 클라우드로."""
+        local_imgs = image_urls if config.LLM_VISION else None
+        try:
+            if skip_local and image_urls:
+                raise SummaryError(f"로컬 생략: {skip_reason or 'OCR 판독 실패'}")
+            return self.local.summarize(title, content_html, local_imgs, ocr_texts=ocr_texts)
+        except EmptyContentError:
+            if not image_urls:               # 진짜 내용 없음(본문·이미지 모두 없음)
+                raise
+            e = SummaryError("로컬: 본문·OCR 없음(이미지뿐)")
+            return self._to_cloud(title, content_html, image_urls, e)
+        except Exception as e:   # SummaryError + 예상 밖 예외(로컬 서버 이상 응답 등) 모두 폴백
+            return self._to_cloud(title, content_html, image_urls, e)
+
+    def _to_cloud(self, title, content_html, image_urls, e):
+        if SHUTDOWN.is_set():
+            raise e
+        log.warning("[LLM 폴백] 로컬 실패 → 클라우드 %s 로 재요약 · 로컬 사유: %s",
+                    self.cloud.model, str(e)[:300])
+        t0 = time.time()
+        try:
+            text, engine = self.cloud.summarize(title, content_html, image_urls)
+        except SummaryError as ce:
+            raise SummaryError(f"로컬: {e} / 클라우드: {ce}") from ce
+        engine = f"cloud:{engine}"
+        if self.on_fallback:
+            try:
+                self.on_fallback(title, str(e), engine, time.time() - t0)
+            except Exception as de:          # 디버그 발송 실패가 요약 결과를 버리게 하면 안 된다
+                log.warning("[LLM 폴백] 디버그 발송 실패: %s", de)
+        return text, engine
+
+
+def cloud_summarizer():
+    """Google AI Studio(Gemini API OpenAI 호환) 요약기. 키 없거나 비활성이면 None."""
+    if not (config.LLM_CLOUD_FALLBACK and str(config.LLM_CLOUD_API_KEY).strip()):
+        return None
+    return OpenAICompatSummarizer(base_url=config.LLM_CLOUD_BASE_URL,
+                                  api_key=config.LLM_CLOUD_API_KEY,
+                                  model=config.LLM_CLOUD_MODEL,
+                                  fallback_model="")
+
+
 def default_summarizer():
-    return OpenAICompatSummarizer()
+    local = OpenAICompatSummarizer()
+    cloud = cloud_summarizer()
+    return FallbackSummarizer(local, cloud) if cloud else local

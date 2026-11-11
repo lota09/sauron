@@ -50,22 +50,32 @@ DB_PATH = _get("SAURON_DB", os.path.join(_HERE, "db", "notice.db"))
 
 # ── 요약 LLM (OpenAI 호환) ───────────────────────────
 # 기본은 같은 기기의 로컬 서버. 다른 기기의 서버를 쓰면 설정 파일에서 덮어쓴다(개발 PC의 LAN 주소 등).
-LLM_BASE_URL = _get("LLM_BASE_URL", "http://localhost:8000/v1")
+LLM_BASE_URL = _get("LLM_BASE_URL", "http://localhost:8080/v1")
 LLM_API_KEY = _get("LLM_API_KEY", "sk-none")          # 로컬 런타임은 보통 불필요
 # 'auto'(기본) = 시작 시 서버에 로드된 모델을 1회 조회해 자동 확정(/health → /v1/models).
 #   특정 모델을 강제하려면 정확한 이름을 넣는다. 확인: curl <LLM_BASE_URL>/models
 LLM_MODEL = _get("LLM_MODEL", "auto")
 LLM_MODEL_FALLBACK = _get("LLM_MODEL_FALLBACK", "")    # 품질 미달 시 승격. 빈값=미사용
+# ── 클라우드 폴백 (Google AI Studio, 무료 티어) ─────────
+# 로컬 LLM이 어떤 이유로든(연결·시간초과·서버오류·검증실패·모델오류) 최종 실패하면 여기로 한 번 더 요약한다.
+# Gemini API의 OpenAI 호환 엔드포인트를 쓴다(같은 /chat/completions 클라이언트 재사용).
+# 키는 secrets/config.json의 LLM_CLOUD_API_KEY에만 둔다(커밋 금지). 키가 비면 폴백 비활성.
+LLM_CLOUD_BASE_URL = _get("LLM_CLOUD_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai")
+LLM_CLOUD_API_KEY = _get("LLM_CLOUD_API_KEY", "")
+LLM_CLOUD_MODEL = _get("LLM_CLOUD_MODEL", "gemini-flash-lite-latest")   # 무료 티어·빠름. 목록: GET <base>/models
+LLM_CLOUD_FALLBACK = _get_bool("LLM_CLOUD_FALLBACK", True)              # 키가 있어도 끄려면 false
 # 타임아웃(초): connect=서버 연결 대기, read=스트리밍 중 바이트 간 최대 침묵(★첫 토큰 대기 포함), wall=한 요약 총 상한.
 # read는 '첫 토큰이 나올 때까지'도 포함한다. 긴 본문+이미지는 폰에서 prefill만 20초를 넘긴다(실측: 첫 토큰 최대 15.8s 성공,
 # 6천자+이미지 3건은 20s에서 잘림 — requests는 이 경우 ReadTimeout이 아니라 ConnectionError를 낸다). wall이 멈춤을 따로 잡는다.
 LLM_CONNECT_TIMEOUT = _get_int("LLM_CONNECT_TIMEOUT", 10)
-LLM_TIMEOUT = _get_int("LLM_TIMEOUT", 60)              # read timeout(첫 토큰 대기 포함)
-LLM_WALL_TIMEOUT = _get_int("LLM_WALL_TIMEOUT", 120)   # 한 요약 총 벽시계 상한(반복폭주 방지)
+# 동시 4슬롯(-np 4) 실측(2026-11-11, 이미지 공지 20건): 첫 토큰 최대 118s, 생성 200~300토큰 ≈ 60~75s(건당 ≈4 t/s).
+#   120/120 에서는 벽시계 절단 44회·읽기 시간초과 6회 → 요약이 첫 줄만 남는 일이 생김. 그래서 150/300.
+LLM_TIMEOUT = _get_int("LLM_TIMEOUT", 150)             # read timeout(첫 토큰 대기 포함)
+LLM_WALL_TIMEOUT = _get_int("LLM_WALL_TIMEOUT", 300)   # 한 요약 총 벽시계 상한(반복폭주 방지)
 # /상태 의 백엔드 생존 점검(probe_backend) 타임아웃. 디스코드 응답 예산(defer 후 15분이지만
 # 사용자 체감 상 수 초) 안에 끝나야 하므로 요약용 타임아웃과 따로 짧게 둔다.
 LLM_STATUS_TIMEOUT = _get_int("LLM_STATUS_TIMEOUT", 4)
-LLM_MAX_CONCURRENCY = _get_int("LLM_MAX_CONCURRENCY", 1)  # 폰=단일슬롯. 확장 시 상향
+LLM_MAX_CONCURRENCY = _get_int("LLM_MAX_CONCURRENCY", 4)  # = llama-server 슬롯 수(-np 4 -kvu). 동시 4건 총 17.6 t/s(실측)
 LLM_MAX_INPUT_CHARS = _get_int("LLM_MAX_INPUT_CHARS", 6000)  # 초과 시 선축소/절단
 LLM_STREAM = _get_bool("LLM_STREAM", True)             # litertlm 서버는 스트리밍 사용(검증된 형태)
 LLM_MAX_TOKENS = _get_int("LLM_MAX_TOKENS", 2048)      # 출력 상한. 잘리면 상향
@@ -87,7 +97,9 @@ LLM_RETRY_WAIT_SEC = _get_int("LLM_RETRY_WAIT_SEC", 5)   # 연결 실패 시 재
 #  반복붕괴는 strip_degenerate가, 언어이탈은 검증기가 잡고, 실패 시 리롤(프롬프트 미세변형).
 # 공지에 이미지가 있으면 요약 요청에 '무조건' 첨부(텍스트 유무·글자수 무관). 프롬프트는 텍스트용과 공유
 # — LLM_USER_TEMPLATE 하나로 텍스트+이미지 함께 넘기면 모델이 알아서 이미지를 참고한다(비전 전용 프롬프트 X).
-LLM_VISION = _get_bool("LLM_VISION", True)                    # 이미지 첨부 on/off
+# ★ 로컬 LLM 비전은 끈다(docs/local_llm_ocr_plan.md §0): E4B 비전은 빽빽한 표의 날짜를 지어냄 → 이미지는 OCR 텍스트로.
+#   False여도 이미지는 내려받아 OCR 입력·클라우드 폴백(비전)에 쓴다. True면 예전처럼 로컬 LLM에도 이미지를 첨부.
+LLM_VISION = _get_bool("LLM_VISION", False)                   # 로컬 LLM에 이미지 첨부 on/off
 # ⚠ 다운스케일 트레이드오프(probe 실측): 768~1024는 포스터 날짜를 정독하면서 다중이미지 페이로드를 크게 줄인다
 #   (2479px 원본 3장 ~3MB → ~0.5MB). 512는 글자가 뭉개져 '환각 날짜'가 나옴 → 768 미만 금지.
 #   조밀한 표까지 정밀 추출이 필요하면 다운스케일이 아니라 타일링으로. Pillow 없으면 이 값 무시(원본 전송).
@@ -100,6 +112,26 @@ LLM_VISION_MIN_BYTES = _get_int("LLM_VISION_MIN_BYTES", 3000)
 # 이미지가 첨부될 때만 프롬프트에 덧붙는 지시(텍스트 전용 요약엔 안 붙어 '이미지' 오해 방지).
 LLM_VISION_HINT = _get("LLM_VISION_HINT",
                        "\n- 첨부된 포스터 이미지 안의 날짜·주요일정·대상·표 내용을 읽어 요약에 반영할 것.")
+
+# ── OCR (이미지 공지 → 텍스트, docs/local_llm_ocr_plan.md) ─────────────────────
+# RapidOCR + MNN. 크롤러 프로세스 안에서 OCR 워커 1개가 직렬로 돈다(LLM 큐를 막지 않는다).
+OCR_ENABLE = _get_bool("OCR_ENABLE", True)
+OCR_BACKEND = _get("OCR_BACKEND", "VULKAN")          # VULKAN(GPU, 기본) | CPU. OpenCL(rusticl)은 동작 안 함(실측)
+OCR_CPUS = _get("OCR_CPUS", "0-3")                   # 전·후처리 스레드를 작은 코어에 고정(큰 코어=LLM 몫)
+OCR_THREADS = _get_int("OCR_THREADS", 4)             # MNN numThread(CPU 백엔드일 때 의미)
+OCR_TIMEOUT = _get_int("OCR_TIMEOUT", 60)            # 이미지 1장 상한(초). GPU 실측 장당 1.5~7.4s
+OCR_MIN_CHARS = _get_int("OCR_MIN_CHARS", 20)        # 공지 전체 OCR 글자가 이보다 적으면 '판독 실패'(디자인 포스터 등)
+# 신뢰도(RapidOCR 박스 점수, 글자수 가중 평균). 실측: 정상 판독 0.88~0.98 · 디자인 포스터(깨진 글자) 0.71.
+#   공지 전체가 OCR_MIN_SCORE 미만이면 '판독 실패'(글자수가 충분해도) → 로컬 생략. 박스 단위로는 OCR_BOX_MIN_SCORE 미만을 버린다.
+OCR_MIN_SCORE = float(_get("OCR_MIN_SCORE", "0.80"))
+OCR_BOX_MIN_SCORE = float(_get("OCR_BOX_MIN_SCORE", "0.50"))
+OCR_MAX_CHARS = _get_int("OCR_MAX_CHARS", 6000)      # 프롬프트에 붙일 OCR 텍스트 총 상한(본문 LLM_MAX_INPUT_CHARS와 별도)
+OCR_MAX_CONSEC_FAIL = _get_int("OCR_MAX_CONSEC_FAIL", 3)  # 엔진 오류가 연속 이만큼이면 OCR 끄고 이미지 공지는 폴백 경로로
+OCR_IDLE_RELEASE_SEC = _get_int("OCR_IDLE_RELEASE_SEC", 900)  # 이만큼 안 쓰면 엔진 반납(≈0.4GB 회수). 0=반납 안 함
+# OCR 텍스트를 붙일 때 프롬프트 끝에 덧붙는 지시.
+LLM_OCR_HINT = _get("LLM_OCR_HINT",
+                    "\n- [첨부 이미지 OCR] 은 공지 이미지에서 기계로 읽은 글자다. 줄·칸이 섞였거나 오타가 있을 수 있으니 "
+                    "날짜·시간·대상·장소·신청방법을 우선 추출하고, 확실하지 않은 숫자는 지어내지 말 것.")
 
 # 언어 이탈 검사(결정론) — 2B judge가 못 잡는 외국어 혼입/붕괴를 코드로 차단.
 LLM_ENFORCE_KOREAN = _get_bool("LLM_ENFORCE_KOREAN", True)

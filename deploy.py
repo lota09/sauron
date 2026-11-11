@@ -14,7 +14,7 @@ setup_guild 진행 '아니오')은 실패가 아니라 건너뛰기로 계속 �
   1) 가상환경 생성 여부(Y) + 이름(기본 .venv)   — 이미 있으면 재사용
   2) 활성 venv로 pip install -r requirements.txt (discord.py 포함, 설치 한 방)
   3) secrets 입력: 봇 토큰 / DISCORD_GUILD_ID / LLM_BASE_URL
-       기본값 = 기존 파일 값(있으면), LLM_BASE_URL 없으면 http://localhost:8000/v1
+       기본값 = 기존 파일 값(있으면), LLM_BASE_URL 없으면 http://localhost:8080/v1
   4) DB 초기화: init/seed_db.py (schema + depts_seed.csv의 학과 upsert)
        ★ setup_guild가 depts 테이블을 읽어 학과 채널을 만들므로 반드시 이 단계가 먼저.
   3b) 플러그인 비밀: CSV가 쓰는 플러그인(plugins/<이름>.py)이 SECRETS로 선언한 키 중
@@ -44,7 +44,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 SECRETS = os.path.join(ROOT, "secrets")
 CONFIG_JSON = os.path.join(SECRETS, "config.json")
 TOKEN_JSON = os.path.join(SECRETS, "discord-api-info.json")
-DEFAULT_LLM = "http://localhost:8000/v1"
+DEFAULT_LLM = "http://localhost:8080/v1"
 
 
 # ── 입출력 헬퍼 ───────────────────────────────────────
@@ -119,6 +119,33 @@ def step_pip(py):
     r = run([py, "-m", "pip", "install", "-r", os.path.join(ROOT, "requirements.txt")])
     if r.returncode != 0:
         die("pip 설치 실패 — 로그 확인 후 재실행하세요.")
+
+
+MNN_WHEEL_DEFAULT = os.path.expanduser(
+    "~/llm/ocr/MNN/pymnn/pip_package/dist/mnn_vulkan_opencl-3.6.2-cp313-cp313-linux_aarch64.whl")
+LIBVULKAN = "/usr/lib/aarch64-linux-gnu/libvulkan.so.1"
+
+
+def step_ocr(py, venv_dir):
+    """[2b] 이미지 공지 OCR(선택). Vulkan 포함 MNN 휠이 있을 때만 설치 — 없으면 건너뜀(OCR 없이도 동작:
+    이미지 공지는 클라우드 비전 또는 본문만으로 요약)."""
+    print("\n[2b] 이미지 OCR 의존성 (선택)")
+    wheel = os.environ.get("MNN_WHEEL", MNN_WHEEL_DEFAULT)
+    if not os.path.exists(wheel):
+        print(f"    MNN(Vulkan) 휠 없음: {wheel}\n    → 건너뜀. OCR을 쓰려면 MNN_WHEEL=<휠 경로> 로 다시 실행")
+        return
+    r = run([py, "-m", "pip", "install", wheel, "-r", os.path.join(ROOT, "requirements-ocr.txt")])
+    if r.returncode != 0:
+        print("    ⚠ OCR 의존성 설치 실패 → OCR 없이 계속(config OCR_ENABLE=false 권장)")
+        return
+    # MNN 은 dlopen("libvulkan.so") — 버전 없는 이름을 venv/vklib 에 만들고 sauron.sh 가 LD_LIBRARY_PATH 에 넣는다.
+    vk = os.path.join(ROOT, venv_dir, "vklib")
+    os.makedirs(vk, exist_ok=True)
+    link = os.path.join(vk, "libvulkan.so")
+    if os.path.exists(LIBVULKAN) and not os.path.lexists(link):
+        os.symlink(LIBVULKAN, link)
+    print(f"    → 설치됨 · {link} → {os.path.realpath(link) if os.path.lexists(link) else '없음(libvulkan1 미설치?)'}")
+    print("    (첫 OCR 때 RapidOCR 가 모델 파일을 내려받는다 — 인터넷 필요)")
 
 
 def step_secrets():
@@ -321,6 +348,11 @@ def _write_root(path, content):
                           stdout=subprocess.DEVNULL).returncode == 0
 
 
+# 사우론 서비스는 효율 코어(A55, 0-3)에 고정 — 성능 코어(4-7)는 로컬 LLM(llama-server) 몫.
+#   llama 쪽 고정은 여기서 건드리지 않는다(그 서비스가 자체 설정).
+SAURON_CPUS = "0-3"
+
+
 def _systemd_unit(desc, command, workdir, user, venv):
     """경로·계정·venv 이름을 현재 배포 실체에 맞춰 박아 넣는다."""
     return f"""[Unit]
@@ -335,6 +367,7 @@ WorkingDirectory={workdir}
 Environment=VENV_DIR={venv}
 Environment=PYTHONUNBUFFERED=1
 ExecStart={command}
+CPUAffinity={SAURON_CPUS}
 Restart=always
 RestartSec=10
 KillMode=mixed
@@ -349,7 +382,7 @@ def _supervisor_conf(user, venv):
     def prog(name, desc, command, workdir):
         return f"""[program:{name}]
 ; {desc}
-command={command}
+command=taskset -c {SAURON_CPUS} {command}
 directory={workdir}
 user={user}
 environment=HOME="{os.path.expanduser('~' + user)}",VENV_DIR="{venv}",PYTHONUNBUFFERED="1"
@@ -471,6 +504,7 @@ def main():
     print("=== sauron 세팅 (deploy.py) — 멱등, 여러 번 실행 가능 ===")
     py, using_venv = step_venv()
     step_pip(py)
+    step_ocr(py, os.path.basename(os.path.dirname(os.path.dirname(py))) if using_venv else ".venv")
     can_guild = step_secrets()
     step_plugin_secrets(py)     # CSV가 플러그인을 쓰면 그 비밀(없는 것만)
     step_db(py)                 # setup_guild가 depts 테이블을 읽으므로 먼저

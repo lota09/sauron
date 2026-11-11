@@ -20,7 +20,7 @@
 ## 1. 하드웨어 · 토폴로지 · RAM 예산
 
 - **전 구성요소가 Note20 Ultra 한 대 안**에서 동작한다.
-- 요약 LLM은 **폰 위 추론 런타임**이 `localhost:8000/v1` (OpenAI 호환)로 노출. 모델: **Gemma 3n E2B**(기본) / E4B(승격 옵션, 컨텍스트 4k).
+- 요약 LLM은 **폰 위 추론 런타임**이 `localhost:8080/v1` (OpenAI 호환)로 노출. 모델: **Gemma 3n E2B**(기본) / E4B(승격 옵션, 컨텍스트 4k).
 - 유휴 상태 기준 **7.8 / 10.3 GB** 사용 → **가용 여유 약 2.5GB**. 이 숫자가 아키텍처의 진짜 제약이다.
   - 런타임은 로드 시 `n_ctx`용 KV 캐시를 선점하므로 7.8GB엔 max-token 메모리가 이미 대부분 포함. E4B+큰 컨텍스트로 올리면 이 값이 커져 여유가 더 줄어든다 → **E2B 유지가 품질이 아니라 RAM 결정이기도 하다.**
 
@@ -56,7 +56,7 @@
                  │      └────────────────┘                                                │
                  │           │ await queue.get()                                          │
                  │           ▼                                                            │
-                 │      (C) 요약 워커: [이미지있으면 OCR] → LLM(localhost:8000) → 결과      │
+                 │      (C) 요약 워커: [이미지있으면 OCR] → LLM(localhost:8080) → 결과      │
                  │           │                                                            │
                  │           ▼                                                            │
                  │      (D) 디스코드 "제목+요약+링크" 발송(요약 실패 시 실패 문구)            │
@@ -64,7 +64,7 @@
                  │  [상시] 디스코드 봇: /구독 · 버튼 → Select 메뉴 → 역할부여 + subscriptions │
                  │  [상시] keep-alive & 디버그 → 감시채널(CHANNEL_ID_DEBUG)                 │
                  └────────────────────────────────────────────────────────────────────────┘
-                              LLM은 별도 런타임(같은 폰) : localhost:8000/v1
+                              LLM은 별도 런타임(같은 폰) : localhost:8080/v1
 ```
 
 - **A(구독)·B(크롤)·C(요약)·D(전송)·감시** 를 한 프로세스 안 코루틴들로 구성.
@@ -259,7 +259,7 @@ sauron_reborn/
 │   └─ diff.py               ← 차집합 + 시딩 + UPDATE_LIMIT
 ├─ summarize/
 │   ├─ worker.py             ← asyncio 큐 소비 + Semaphore(1)
-│   ├─ llm.py                ← localhost:8000/v1 클라이언트(E2B/E4B) + 검증/폴백
+│   ├─ llm.py                ← localhost:8080/v1 클라이언트(E2B/E4B) + 검증/폴백
 │   ├─ ocr.py                ← Tesseract/Paddle 온디맨드
 │   └─ clova.py              ← 실패건 폴백(+감시채널 로그)
 ├─ discord/
