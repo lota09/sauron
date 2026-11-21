@@ -25,6 +25,16 @@ from itertools import groupby
 KST = timezone(timedelta(hours=9))
 
 NOTICE_COLS = "n.id, n.dept_id, n.title, n.url, n.summary, n.status, n.first_seen_at, n.created_at"
+DEADLINE_COLS = ", n.deadline_state, n.deadline_at"
+_HAS_DEADLINE = False
+
+
+def _cols(conn):
+    """마감일 열은 크롤러가 재시작하며 붙인다(db/store.py _migrate). 그 전 DB에서도 동작하게 있을 때만 읽는다."""
+    global _HAS_DEADLINE
+    if not _HAS_DEADLINE:
+        _HAS_DEADLINE = any(r[1] == "deadline_state" for r in conn.execute("PRAGMA table_info(notices)"))
+    return NOTICE_COLS + (DEADLINE_COLS if _HAS_DEADLINE else "")
 # 발견 시각: 처리(promote)된 공지는 created_at, 시딩만 된 공지는 first_seen_at
 DETECTED = "COALESCE(n.created_at, n.first_seen_at)"
 
@@ -99,6 +109,9 @@ def _notice(row, detail):
         out["seeded"] = True
     else:
         out["at"] = _kst(row["created_at"] or row["first_seen_at"])
+    # 마감일: 소형 로컬 LLM이 원문의 날짜 중 고른 '지금 할 일의 마감'(KST). 정한 것(set)만 낸다 — 없음·모름은 필드 없음
+    if "deadline_state" in row.keys() and row["deadline_state"] == "set" and row["deadline_at"]:
+        out["deadline"] = row["deadline_at"]
     if detail == "brief":
         return out
     out["summary"] = row["summary"]          # None = 요약 없음(실패·제목만 기록된 공지)
@@ -270,7 +283,7 @@ def query_notices(conn, query=None, dept_ids=None, days=7, detail="brief", limit
     else:
         where.append("n.status != 'seeded'")
 
-    cols = NOTICE_COLS + (", n.content_raw, n.images_json" if detail == "full" else "")
+    cols = _cols(conn) + (", n.content_raw, n.images_json" if detail == "full" else "")
     # 중복을 묶으면 건수가 줄어드므로 넉넉히 읽고 묶은 뒤 자른다
     rows = conn.execute(
         f"SELECT {cols}, {rank} AS rank FROM notices n WHERE {' AND '.join(where)} "
@@ -300,7 +313,7 @@ def get_notices(conn, notice_ids, detail="full"):
     ids = ids[:MAX_BATCH]
     if not ids:
         return [], []
-    rows = conn.execute(f"SELECT {NOTICE_COLS}, n.content_raw, n.images_json FROM notices n "
+    rows = conn.execute(f"SELECT {_cols(conn)}, n.content_raw, n.images_json FROM notices n "
                         f"WHERE n.id IN ({','.join('?' * len(ids))})", ids).fetchall()
     by_id = {r["id"]: _notice(r, detail) for r in rows}
     return [by_id[i] for i in ids if i in by_id], [i for i in ids if i not in by_id]

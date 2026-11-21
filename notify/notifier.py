@@ -113,10 +113,14 @@ class Notifier:
     def _embed(self, notice, dept):
         summary = (notice.get("summary") or "").strip()
         status = notice.get("status")
+        # 마감 줄('⏰ … 까지 · N일 후 마감'): 로컬 LLM 판단이라 면책 문구 '위'에 둔다. 없거나 모르면 줄 자체를 뺀다.
+        from summarize.deadline import discord_line
+        dl = discord_line(notice)
+        dl = f"\n\n{dl}" if dl else ""
         if summary:
-            desc = f"​\n{summary}\n\n{SUMMARY_DISCLAIMER}\n​"     # 성공: 요약 + 면책 문구
+            desc = f"​\n{summary}{dl}\n\n{SUMMARY_DISCLAIMER}\n​"     # 성공: 요약 + 마감 + 면책 문구
         elif status == "summary_failed":
-            desc = f"​\n{SUMMARY_FAIL_NOTE}\n​"                    # 실패: 대체 문구
+            desc = f"​\n{SUMMARY_FAIL_NOTE}{dl}\n​"                    # 실패: 대체 문구(+마감)
         elif status == "no_content":
             desc = f"​\n{SUMMARY_NO_CONTENT_NOTE}\n​"              # 내용없음(#3): 제목만/이미지 로드 실패
         else:

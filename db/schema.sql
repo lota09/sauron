@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS notices (
   summary            TEXT,                  -- 요약 결과(있을 때)
   summary_engine     TEXT,                  -- 'Gemma-…' | 'vision:…' | NULL
   fail_reason        TEXT,                  -- 실패/내용없음 사유(사후 분석용). 성공 시 NULL
+  deadline_state     TEXT,                  -- 마감일(summarize/deadline.py): 'set'|'none'|'unknown'|NULL(미계산)
+  deadline_at        TEXT,                  -- KST 'YYYY-MM-DD'(날짜만=그날 끝) | 'YYYY-MM-DDTHH:MM'. set일 때만
+  deadline_conf      REAL,                  -- LLM이 고른 선택지의 확률(0~1). 후보 없음(none)이면 NULL
   status             TEXT NOT NULL DEFAULT 'seeded',
   discord_channel_id TEXT,                  -- 실제 발송된 채널
   discord_message_id TEXT,                  -- edit 대상 메시지

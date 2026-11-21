@@ -482,6 +482,13 @@ class OpenAICompatSummarizer:
                 log.warning("[LLM 포기] 재시도 소진(또는 종료신호) · 누적사유: %s", " / ".join(reasons))
                 raise SummaryError(" / ".join(reasons))
 
+    def prompt_prefix(self, title, content_html, ocr_texts=None):
+        """요약 때 로컬에 보낸 텍스트 프롬프트(이미지 지시 제외)와 같은 문자열. 마감일 질문을 이 뒤에 이어 붙이면
+        llama-server 가 같은 앞부분의 KV 캐시를 다시 써서 본문을 두 번 읽지 않는다(summarize/deadline.py)."""
+        base = self._compose_prompt(title, html_to_text(content_html))
+        ocr_block, _ = _ocr_block(ocr_texts)
+        return base + (ocr_block + config.LLM_OCR_HINT if ocr_block else "")
+
     def summarize(self, title, content_html, image_urls=None, ocr_texts=None):
         """요약. 텍스트 프롬프트 하나에 (있으면) 이미지·OCR 텍스트를 함께 넘긴다(비전 전용 프롬프트 X).
         ocr_texts: 장별 OCR 텍스트 — 본문 뒤에 '[첨부 이미지 N OCR]' 블록으로 붙인다(빈 장은 생략).
@@ -545,6 +552,9 @@ class FallbackSummarizer:
     @property
     def base_url(self):
         return self.local.base_url
+
+    def prompt_prefix(self, title, content_html, ocr_texts=None):
+        return self.local.prompt_prefix(title, content_html, ocr_texts)
 
     def ensure_model(self):
         try:

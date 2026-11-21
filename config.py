@@ -133,6 +133,20 @@ LLM_OCR_HINT = _get("LLM_OCR_HINT",
                     "\n- [첨부 이미지 OCR] 은 공지 이미지에서 기계로 읽은 글자다. 줄·칸이 섞였거나 오타가 있을 수 있으니 "
                     "날짜·시간·대상·장소·신청방법을 우선 추출하고, 확실하지 않은 숫자는 지어내지 말 것.")
 
+# ── 마감일 (summarize/deadline.py, LLM-as-Jev: 원문에서 뽑은 날짜 중 '고르기'만 LLM) ──
+#   디스코드에는 '⏰ <날짜> 까지 · <N일 후/전> 마감' (보는 사람 화면에서 저절로 바뀜, 메시지 수정 없음).
+#   마감이 없거나 모르면 줄 자체를 뺀다. MCP 에는 deadline 필드(+ 확률)로 나간다.
+DEADLINE_ENABLE = _get_bool("DEADLINE_ENABLE", True)
+# 행사·시험의 '일시'를 마감으로 고르던 문제(실측 30건 중 2건) → 신청·제출류로 한정하고 행사 일시는 제외라고 명시
+DEADLINE_QUESTION = _get("DEADLINE_QUESTION",
+                         "학생이 지금 해야 하는 일(신청·접수·제출·등록·납부·회신 등)의 마감일은 무엇인가? "
+                         "행사·설명회·시험이 열리는 일시 자체는 마감일이 아니다.")
+DEADLINE_MIN_PROB = float(_get("DEADLINE_MIN_PROB", "0.8"))      # 고른 선택지 확률이 이보다 낮으면 unknown(표시 안 함)
+DEADLINE_MAX_CHOICES = _get_int("DEADLINE_MAX_CHOICES", 16)      # 날짜 후보 상한(이른 날짜부터)
+DEADLINE_MAX_INPUT_CHARS = _get_int("DEADLINE_MAX_INPUT_CHARS", 6000)
+DEADLINE_SNIPPET_CHARS = _get_int("DEADLINE_SNIPPET_CHARS", 36)  # 선택지마다 붙이는 원문 문맥 길이(토큰=시간)
+DEADLINE_TIMEOUT = _get_int("DEADLINE_TIMEOUT", 300)             # 출력 1토큰 → 거의 전부 프롬프트 처리 시간(≈15토큰/s, 긴 공지 단독 100s+)
+
 # 언어 이탈 검사(결정론) — 2B judge가 못 잡는 외국어 혼입/붕괴를 코드로 차단.
 LLM_ENFORCE_KOREAN = _get_bool("LLM_ENFORCE_KOREAN", True)
 LLM_MAX_HAN = _get_int("LLM_MAX_HAN", 5)                    # 한자(CJK) 이보다 많으면 중국어 주입 의심

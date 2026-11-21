@@ -220,7 +220,47 @@ async def stage_llm(c, job):
         c.log(f"[요약 실패] {time.time() - t0:.1f}s :: {notice['title'][:40]}{img_note}\n"
               f"          사유: {err}")
     ocr_text = _ocr_text_for_db(job.ocr_texts)
+    if status != "no_content":
+        # 로컬이 이 공지 텍스트를 방금 읽었으면 같은 프롬프트 뒤에 질문을 이어 KV 캐시를 재사용한다
+        prefix = None
+        if not job.skip_local and hasattr(c.summarizer, "prompt_prefix"):
+            try:
+                prefix = c.summarizer.prompt_prefix(notice["title"], notice.get("content_raw") or "",
+                                                    job.ocr_texts)
+            except Exception:
+                prefix = None
+        await _deadline(c, notice, ocr_text, prefix)
     await _publish(c, notice, dept, summary, engine, status, reason, ocr_text=ocr_text)
+
+
+def _ref_date(notice):
+    """'지금'의 기준 = 공지를 처리(발견)한 날(KST). 정상 공지는 게시 후 10분 안쪽이라 사실상 게시일."""
+    from summarize.deadline import KST
+    from datetime import datetime, timezone
+    s = notice.get("created_at") or notice.get("first_seen_at")
+    try:
+        return datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).astimezone(KST).date()
+    except Exception:
+        return datetime.now(KST).date()
+
+
+async def _deadline(c, notice, ocr_text, prefix=None):
+    """마감일 판정(summarize/deadline.py) → DB. 요약 성공·실패와 무관하게 하고, 실패해도 공지 처리는 계속."""
+    if not config.DEADLINE_ENABLE:
+        return
+    from summarize import deadline
+    t0 = time.time()
+    try:
+        async with c.queue.sem:
+            res = await asyncio.to_thread(
+                deadline.analyze, notice["title"], notice.get("content_raw") or "", ocr_text,
+                _ref_date(notice), getattr(c.summarizer, "base_url", None), getattr(c.summarizer, "model", None),
+                prefix)
+        await asyncio.to_thread(c.store.set_deadline, notice["id"], res["state"], res["at"], res["conf"])
+        c.log(f"[마감] id={notice['id']} {res['state']} {res['at'] or ''} · 확률 {res['conf']} · "
+              f"후보 {res['n']}개 · {time.time() - t0:.1f}s")
+    except Exception as e:
+        c.log(f"[마감 예외] id={notice['id']}: {type(e).__name__}: {e}")
 
 
 def _call_summarizer(summarizer, title, html, image_urls, kwargs):

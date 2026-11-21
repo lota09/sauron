@@ -19,6 +19,7 @@ FIX = os.path.join(ROOT, "tests", "fixtures")
 
 import config
 config.UPDATE_LIMIT = 5
+config.DEADLINE_ENABLE = False     # 기존 e2e 는 모의 LLM 서버라 마감 판정 끔 — test_deadline 에서 따로 검증
 
 from db.store import Store
 from crawl.fetcher import Fetcher
@@ -1148,12 +1149,89 @@ def test_ocr_fallback_routing():
         config.LLM_VISION = vision_old
 
 
+def test_deadline():
+    print("\n[마감일 — 후보 추출 · 선택 판정 · 디스코드 줄 위치 · DB 마이그레이션 · MCP 필드]")
+    from datetime import date
+    import importlib.util
+    from summarize import deadline as D
+
+    text = ("참가 신청: 2026.11.03.(화) ~ 11.20.(금) 18:00\n예선 발표: 11.27.(금)\n시상식: 12월 11일\n"
+            "신청: 11월 3일 ~ 20일 오후 5시\n문의 02-820-0114, 평점 3.5 이상, 작년 2025.10.01.")
+    c = D.extract_candidates(text, date(2026, 11, 2))
+    got = [D._at(x) for x in c]
+    check("후보: 연월일·월일·'~20일'·시각, 전화·학점·지난 날짜 제외",
+          got == ["2026-11-03", "2026-11-20T17:00", "2026-11-20T18:00", "2026-11-27", "2026-12-11"], got)
+    got = [D._at(x) for x in D.extract_candidates(
+        "모집기간\n2026.11.12 00:00 ~2026.11.30 17:00\n등록일\n2026.11.10", date(2026, 11, 10))]
+    check("등록일 날짜는 빼되, 다음 줄에 '등록일'이 와도 마감은 남김", got == ["2026-11-12T00:00", "2026-11-30T17:00"], got)
+    check("연도 없는 1/5 는 12월 공지에서 다음 해",
+          [D._at(x) for x in D.extract_candidates("개강 1/5", date(2026, 12, 20))] == ["2027-01-05"])
+
+    orig = D.choose
+    try:
+        D.choose = lambda *a, **k: (1, 0.97)
+        r = D.analyze("t", "<p>신청 11.03.(화) ~ 11.20.(금)</p>", None, date(2026, 11, 2))
+        check("고른 선택지 → set + 원문 날짜", r["state"] == "set" and r["at"] == "2026-11-20" and r["conf"] == 0.97, r)
+        D.choose = lambda *a, **k: (1, 0.55)
+        check("확률 낮음 → unknown", D.analyze("t", "11.03.(화) ~ 11.20.(금)", None, date(2026, 11, 2))["state"] == "unknown")
+        D.choose = lambda *a, **k: (None, 0.99)
+        check("'해당 없음' → none", D.analyze("t", "11.20.(금) 결과 발표", None, date(2026, 11, 2))["state"] == "none")
+        def boom(*a, **k):
+            raise ConnectionError("down")
+        D.choose = boom
+        check("호출 실패 → unknown(예외 안 냄)", D.analyze("t", "11.20.(금)", None, date(2026, 11, 2))["state"] == "unknown")
+        calls = []
+        D.choose = lambda *a, **k: calls.append(1) or (0, 1.0)
+        r = D.analyze("t", "날짜 없는 공지", None, date(2026, 11, 2))
+        check("후보 없음 → none, LLM 안 부름", r["state"] == "none" and not calls, (r, calls))
+        D.choose = lambda *a, **k: (0, 0.99)
+        r = D.analyze("t", "본문엔 날짜 없음", "[OCR] 접수 마감 11.20.(금) 17:00", date(2026, 11, 2))
+        check("OCR 텍스트의 날짜도 후보", r["at"] == "2026-11-20T17:00", r)
+    finally:
+        D.choose = orig
+
+    n = Notifier(dst="null")
+    base = {"title": "T", "url": "http://x", "status": "done", "summary": "요약입니다"}
+    e = n._embed(dict(base, deadline_state="set", deadline_at="2026-11-20T18:00"), {})
+    ts = D.to_unix("2026-11-20T18:00")[0]
+    line = f"⏰ <t:{ts}:f> 까지 · <t:{ts}:R> 마감"
+    d = e["description"]
+    check("마감 줄: 요약과 AI 면책 문구 사이", line in d and d.index("요약입니다") < d.index(line) < d.index("AI는 실수"), d)
+    check("날짜만이면 :D 형식", ":D>" in D.discord_line({"deadline_state": "set", "deadline_at": "2026-11-20"}))
+    for st in ("none", "unknown", None):
+        e2 = n._embed(dict(base, deadline_state=st, deadline_at=None), {})
+        check(f"마감 {st} → 줄 없음", "⏰" not in e2["description"])
+
+    # 옛 DB(마감 열 없음)를 Store 가 열면 열이 붙는다
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE notices (id INTEGER PRIMARY KEY, dept_id TEXT, title TEXT, url TEXT, summary TEXT, "
+                "status TEXT, first_seen_at TEXT, created_at TEXT, updated_at TEXT)")
+    con.execute("INSERT INTO notices VALUES (1,'d','t','u','s','done','2026-11-01 00:00:00','2026-11-01 00:00:00',NULL)")
+    con.commit()
+    spec = importlib.util.spec_from_file_location("mcp_queries_t", os.path.join(ROOT, "mcp", "queries.py"))
+    Q = importlib.util.module_from_spec(spec); spec.loader.exec_module(Q)
+    con.row_factory = sqlite3.Row
+    check("MCP: 마감 열 없는 DB에서도 동작", "deadline" not in Q._cols(con), Q._cols(con))
+    st = Store(path)
+    st.set_deadline(1, "set", "2026-11-20", 0.95)
+    row = st.get_notice(1)
+    check("마이그레이션 + set_deadline", row["deadline_state"] == "set" and row["deadline_at"] == "2026-11-20", row)
+    st.close()
+    Q._HAS_DEADLINE = False
+    con = sqlite3.connect(path); con.row_factory = sqlite3.Row
+    r = con.execute(f"SELECT {Q._cols(con)} FROM notices n").fetchone()
+    out = Q._notice(r, "brief")
+    check("MCP: deadline 필드(set만)", out.get("deadline") == "2026-11-20", out)
+    con.close(); os.remove(path)
+
+
 if __name__ == "__main__":
     for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template, test_generic_options, test_plugins, test_ssupath_login, test_category_rename, test_channel_role_rename,
               test_diff_seed_new_limit, test_crawl_health, test_debug_message_shape, test_llm_client, test_llm_timeout_vs_disconnect, test_image_and_stream_errors,
               test_run_once_e2e, test_send_after_summary, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
-              test_subscribe_logic, test_dst_routing, test_ocr_fallback_routing):
+              test_subscribe_logic, test_dst_routing, test_ocr_fallback_routing, test_deadline):
         try:
             t()
         except Exception as e:

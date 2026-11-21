@@ -18,6 +18,23 @@ class Store:
         self._con.execute("PRAGMA journal_mode=WAL;")
         self._con.execute("PRAGMA foreign_keys=ON;")
         self._lock = threading.RLock()
+        self._migrate()
+
+    # 기존 DB에 나중에 생긴 열을 붙인다(ADD COLUMN은 즉시 끝남, 데이터 그대로). schema.sql 과 같은 정의.
+    _ADDED_COLUMNS = {
+        "notices": [("deadline_state", "TEXT"), ("deadline_at", "TEXT"), ("deadline_conf", "REAL")],
+    }
+
+    def _migrate(self):
+        with self._lock:
+            for table, cols in self._ADDED_COLUMNS.items():
+                have = {r[1] for r in self._con.execute(f"PRAGMA table_info({table})")}
+                if not have:                      # 테이블 자체가 아직 없음(시딩 전) → schema.sql 이 만든다
+                    continue
+                for name, typ in cols:
+                    if name not in have:
+                        self._con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
+            self._con.commit()
 
     def checkpoint(self):
         """WAL을 본 DB 파일로 flush(TRUNCATE). 외부 뷰어가 최신 상태를 보게 함."""
@@ -132,6 +149,13 @@ class Store:
                 "UPDATE notices SET summary=?, summary_engine=?, ocr_text=COALESCE(?, ocr_text), "
                 "status=?, fail_reason=?, updated_at=datetime('now') WHERE id=?",
                 (summary, engine, ocr_text, status, fail_reason, notice_id))
+            self._con.commit()
+
+    def set_deadline(self, notice_id: int, state: str, at: str = None, conf: float = None):
+        with self._lock:
+            self._con.execute(
+                "UPDATE notices SET deadline_state=?, deadline_at=?, deadline_conf=?, "
+                "updated_at=datetime('now') WHERE id=?", (state, at, conf, notice_id))
             self._con.commit()
 
     def forget_url(self, dept_id: str, url: str):
