@@ -18,6 +18,23 @@ class Store:
         self._con.execute("PRAGMA journal_mode=WAL;")
         self._con.execute("PRAGMA foreign_keys=ON;")
         self._lock = threading.RLock()
+        self._migrate()
+
+    # 기존 DB에 나중에 생긴 열을 붙인다(ADD COLUMN은 즉시 끝남, 데이터 그대로). schema.sql 과 같은 정의.
+    _ADDED_COLUMNS = {
+        "notices": [("deadline_state", "TEXT"), ("deadline_at", "TEXT"), ("deadline_conf", "REAL")],
+    }
+
+    def _migrate(self):
+        with self._lock:
+            for table, cols in self._ADDED_COLUMNS.items():
+                have = {r[1] for r in self._con.execute(f"PRAGMA table_info({table})")}
+                if not have:                      # 테이블 자체가 아직 없음(시딩 전) → schema.sql 이 만든다
+                    continue
+                for name, typ in cols:
+                    if name not in have:
+                        self._con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
+            self._con.commit()
 
     def checkpoint(self):
         """WAL을 본 DB 파일로 flush(TRUNCATE). 외부 뷰어가 최신 상태를 보게 함."""
@@ -134,6 +151,13 @@ class Store:
                 (summary, engine, ocr_text, status, fail_reason, notice_id))
             self._con.commit()
 
+    def set_deadline(self, notice_id: int, state: str, at: str = None, conf: float = None):
+        with self._lock:
+            self._con.execute(
+                "UPDATE notices SET deadline_state=?, deadline_at=?, deadline_conf=?, "
+                "updated_at=datetime('now') WHERE id=?", (state, at, conf, notice_id))
+            self._con.commit()
+
     def forget_url(self, dept_id: str, url: str):
         """디버그용: notices에서 행 제거 → 다음 크롤에 '신규'로 재감지·재처리."""
         with self._lock:
@@ -162,6 +186,34 @@ class Store:
                 "ORDER BY id DESC LIMIT ?", (query, limit)).fetchall()
         return [dict(r) for r in rows]
 
+    def summary_stats(self, hours: int = 24) -> Dict[str, Any]:
+        """최근 N시간 요약 처리 성적(/상태 표시용). LLM이 '살아있는지'(/health)가 아니라
+        '실제로 요약이 되는지'를 본다 — 서버는 200을 주는데 생성만 계속 실패하는 상태를 잡기 위함.
+        반환: {done, failed, no_content, total, fail_rate, last_fail_reason, last_fail_title, last_fail_at}."""
+        since = f"-{int(hours)} hours"
+        out = {"hours": int(hours), "done": 0, "failed": 0, "no_content": 0,
+               "last_fail_reason": None, "last_fail_title": None, "last_fail_at": None}
+        key = {"done": "done", "summary_failed": "failed", "no_content": "no_content"}
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT status, COUNT(*) n FROM notices "
+                "WHERE updated_at >= datetime('now', ?) AND status IN ('done','summary_failed','no_content') "
+                "GROUP BY status", (since,)).fetchall()
+            last = self._con.execute(
+                "SELECT title, fail_reason, updated_at FROM notices WHERE status='summary_failed' "
+                "ORDER BY updated_at DESC LIMIT 1").fetchone()
+        for r in rows:
+            k = key.get(r["status"])
+            if k:
+                out[k] = r["n"]
+        if last:
+            out["last_fail_title"] = last["title"]
+            out["last_fail_reason"] = last["fail_reason"]
+            out["last_fail_at"] = last["updated_at"]
+        out["total"] = out["done"] + out["failed"]          # no_content는 LLM 성적이 아님(호출 자체를 안 함)
+        out["fail_rate"] = (out["failed"] / out["total"]) if out["total"] else None
+        return out
+
     def recent_notices(self, limit: int = 20) -> List[Dict[str, Any]]:
         with self._lock:
             rows = self._con.execute(
@@ -180,6 +232,19 @@ class Store:
                 "INSERT INTO app_meta(key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
             self._con.commit()
+
+    def delete_meta(self, key: str) -> None:
+        with self._lock:
+            self._con.execute("DELETE FROM app_meta WHERE key=?", (key,))
+            self._con.commit()
+
+    def meta_with_prefix(self, prefix: str) -> Dict[str, str]:
+        """접두어로 시작하는 키 전부(예: 'crawl_fail:' → 학과별 실패 상태)."""
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT key, value FROM app_meta WHERE substr(key, 1, ?) = ?",
+                (len(prefix), prefix)).fetchall()
+        return {r["key"]: r["value"] for r in rows}
 
     # ── 구독 (후속 단계에서 봇이 사용) ─────────────────
     def add_user(self, discord_user_id: str):

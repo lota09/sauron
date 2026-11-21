@@ -20,7 +20,7 @@
 ## 1. 하드웨어 · 토폴로지 · RAM 예산
 
 - **전 구성요소가 Note20 Ultra 한 대 안**에서 동작한다.
-- 요약 LLM은 **폰 위 추론 런타임**이 `localhost:8000/v1` (OpenAI 호환)로 노출. 모델: **Gemma 3n E2B**(기본) / E4B(승격 옵션, 컨텍스트 4k).
+- 요약 LLM은 **폰 위 추론 런타임**이 `localhost:8080/v1` (OpenAI 호환)로 노출. 모델: **Gemma 3n E2B**(기본) / E4B(승격 옵션, 컨텍스트 4k).
 - 유휴 상태 기준 **7.8 / 10.3 GB** 사용 → **가용 여유 약 2.5GB**. 이 숫자가 아키텍처의 진짜 제약이다.
   - 런타임은 로드 시 `n_ctx`용 KV 캐시를 선점하므로 7.8GB엔 max-token 메모리가 이미 대부분 포함. E4B+큰 컨텍스트로 올리면 이 값이 커져 여유가 더 줄어든다 → **E2B 유지가 품질이 아니라 RAM 결정이기도 하다.**
 
@@ -47,8 +47,8 @@
                  │                                                                        │
 [스케줄러 10분]──┼─▶ (B) 크롤 & 차집합 감지 ──▶ SQLite(notices 단일 테이블)               │
                  │           │                                                            │
-                 │           ▼  (신규 감지 즉시)                                           │
-                 │      (D1) 디스코드 "제목+링크+@everyone" 발송 → message_id 저장         │
+                 │           ▼  (신규 감지)                                               │
+                 │      상세 fetch → notices(detected)                                     │
                  │           │                                                            │
                  │           ▼  queue.put(notice_id)   ← 인프로세스 인터럽트               │
                  │      ┌────────────────┐                                                │
@@ -56,15 +56,15 @@
                  │      └────────────────┘                                                │
                  │           │ await queue.get()                                          │
                  │           ▼                                                            │
-                 │      (C) 요약 워커: [이미지있으면 OCR] → LLM(localhost:8000) → 결과      │
+                 │      (C) 요약 워커: [이미지있으면 OCR] → LLM(localhost:8080) → 결과      │
                  │           │                                                            │
                  │           ▼                                                            │
-                 │      (D2) 디스코드 message_id를 edit 하여 요약 삽입                      │
+                 │      (D) 디스코드 "제목+요약+링크" 발송(요약 실패 시 실패 문구)            │
                  │                                                                        │
                  │  [상시] 디스코드 봇: /구독 · 버튼 → Select 메뉴 → 역할부여 + subscriptions │
                  │  [상시] keep-alive & 디버그 → 감시채널(CHANNEL_ID_DEBUG)                 │
                  └────────────────────────────────────────────────────────────────────────┘
-                              LLM은 별도 런타임(같은 폰) : localhost:8000/v1
+                              LLM은 별도 런타임(같은 폰) : localhost:8080/v1
 ```
 
 - **A(구독)·B(크롤)·C(요약)·D(전송)·감시** 를 한 프로세스 안 코루틴들로 구성.
@@ -93,7 +93,7 @@ sauron이 이미 도달한 정답을 계승한다. (`Overview.py` + `Update.py`)
 ```
 
 - **판별 키 = URL** (게시물 고유). 제목·게시위치가 아니다 → **고정공지(핀)·순서 꼬임·마감 재정렬을 자동 흡수.** → **BOLD/핀 판별 로직 불필요(폐기).**
-- **UPDATE_LIMIT 가드(계승):** 한 학과에서 신규가 임계치(기본 5, 설정값) 초과면 = 사이트 구조 변경으로 전부 "신규"로 보이는 상황일 확률 ↑ → **대량 알림 차단 + 감시채널 경보.**
+- **UPDATE_LIMIT 가드(계승):** 한 학과에서 신규가 임계치(기본 10, 설정값) 초과면 = 사이트 구조 변경으로 전부 "신규"로 보이는 상황일 확률 ↑ → **대량 알림 차단 + 감시채널 경보.**
 - **시딩(최초 1회, 우려1 해소):** 학과가 미시딩(`depts.seeded_at` NULL)이면 → 목록 **최대 3페이지의 (제목·URL)만** 긁어 `notices`에 **`status='seeded'`로 전량 등록(무발송·무요약)**. 이후부터 진짜 신규만 정상 처리. (최초 전량 fetch+요약이라는 고비용 회피)
   - 시딩과 UPDATE_LIMIT은 함께 동작: 시딩된 학과는 첫 정상런에서 신규가 소수여야 정상.
 - 단일 `notices` 테이블의 `seeded` 행이 sauron의 `buffers/last-*.txt`를 대체(파일 → DB). 제목까지 기억하므로 시딩 공지도 `query` 검색 가능.
@@ -127,6 +127,8 @@ sauron이 60개로 못 간 이유: **사이트마다 파이썬 클래스/모델�
 
 ## 6. OCR (이미지 공지 ~1/4)
 
+> **2026-09-22 폐기.** 이미지는 비전 LLM에 직접 첨부한다([vision_llm_experiment.md](vision_llm_experiment.md)). OCR 엔진(Tesseract·Paddle)과 Clova 폴백 요약은 실사용·검증 없이 유지비만 들어 코드에서 제거했다(git 히스토리에 남음). 아래는 당시 설계 기록.
+
 - **트리거:** 상세 본문에 이미지가 있을 때만(ICT 방식). 없으면 바로 요약.
 - **엔진:** Tesseract(kor)·PaddleOCR **둘 다 실측 벤치** 후 결정. RAM상 **온디맨드 로드 → OCR → 해제**(상주 금지).
 - **폴백 계층:** OCR 실패/생략 → 이미지+제목+링크만으로도 알림은 나간다(누락 0 원칙). 이미지 공지의 요약은 best-effort.
@@ -151,9 +153,18 @@ sauron이 60개로 못 간 이유: **사이트마다 파이썬 클래스/모델�
 
 우선순위(누락 0 > 요약)를 코드에 반영한다.
 
-1. **감지 즉시(D1):** 디스코드에 `📢 제목` + `🔗 자세히 보기` + `@everyone` 임베드 발송 → 반환된 **message_id를 notices에 저장** → `status='notified'` → `queue.put`.
-2. **요약 완료 후(D2):** 저장된 message_id를 **edit(PATCH)** 하여 요약 삽입 → `status='done'`.
-3. 요약 실패/타임아웃 → 메시지는 제목+링크 상태로 유지, `status='summary_failed'`.
+**2026-10-09 변경 — 발송은 요약 뒤 1회(`SEND_AFTER_SUMMARY=True`).** 2단 발송(아래)에서는 디스코드
+폰 푸시 미리보기에 제목만 보여서, 정작 알림을 받은 순간엔 요약을 볼 수 없었다. 요약을 기다렸다 한 번에 보낸다.
+
+1. **감지:** 상세 fetch → `notices`(`status='detected'`) → `queue.put`.
+2. **요약 완료 후:** 요약을 DB에 쓰되 상태는 **'미완'(summarizing)** 으로 둔다 → `📢 제목` + 요약 + `🔗 자세히 보기`
+   임베드 **발송** → message_id 저장 → 최종 상태(`done` / `summary_failed` / `no_content`).
+3. 요약 실패/타임아웃 → 요약 자리에 '요약을 실패하였습니다'를 넣어 **그대로 발송**, `status='summary_failed'` + 감시채널 알림.
+4. 발송 전에 죽거나 디스코드 전송이 실패하면 상태가 '미완'이라 **다음 부팅 때 재적재**된다(`core/queue.py`).
+   요약이 이미 저장돼 있으면 LLM은 다시 부르지 않고 **발송만** 재시도한다.
+
+(이전 설계 = 2단 발송. `SEND_AFTER_SUMMARY=False`로 그대로 쓸 수 있다: 감지 즉시 제목+링크 발송(`notified`)
+→ 요약 완료 후 그 message_id를 **edit(PATCH)** 해 요약 삽입(`done`). 발송이 요약을 기다리지 않는 대신 푸시에 요약이 없다.)
 
 → **"요약 성공"이 "알림 발송"의 전제가 되지 않는다.** 임베드 포맷은 sauron `DiscordMsg.SendEmbedMessage` 계승(제목 📢, description=요약, 링크 필드 @everyone, footer=학과명+아이콘).
 
@@ -244,15 +255,15 @@ sauron_reborn/
 │   └─ store.py              ← SQLite 접근 계층(depts/notices/subs)
 ├─ crawl/
 │   ├─ scheduler.py          ← APScheduler 10분 트리거
-│   ├─ fetcher.py            ← 제네릭 CSS 크롤 + fetch_type 예외(+infocom 재시도)
+│   ├─ fetcher.py            ← 수집 방식 2개(html·json_api) + fetch_config 범용 옵션
 │   └─ diff.py               ← 차집합 + 시딩 + UPDATE_LIMIT
 ├─ summarize/
 │   ├─ worker.py             ← asyncio 큐 소비 + Semaphore(1)
-│   ├─ llm.py                ← localhost:8000/v1 클라이언트(E2B/E4B) + 검증/폴백
+│   ├─ llm.py                ← localhost:8080/v1 클라이언트(E2B/E4B) + 검증/폴백
 │   ├─ ocr.py                ← Tesseract/Paddle 온디맨드
 │   └─ clova.py              ← 실패건 폴백(+감시채널 로그)
 ├─ discord/
-│   ├─ notify.py             ← 임베드 발송(D1) + edit(D2), 감시채널
+│   ├─ notify.py             ← 임베드 발송(요약 포함) + edit(2단 모드), 감시채널
 │   └─ bot.py                ← 구독 봇(슬래시/버튼/Select, 역할부여)
 ├─ core/
 │   ├─ queue.py              ← asyncio.Queue + 크래시복원 재적재
@@ -291,7 +302,7 @@ sauron_reborn/
 - [x] SQLite (Postgres·Redis 불사용)
 - [x] 인터럽트 = 인프로세스 asyncio.Queue + Semaphore(1)
 - [x] 신규감지 = URL 차집합, BOLD/핀 판별 폐기, UPDATE_LIMIT 가드, 3페이지 시딩
-- [x] 크롤 = DB 저장 CSS 셀렉터 제네릭 + fetch_type 예외 (autoscraper 폐기)
+- [x] 크롤 = DB 저장 CSS 셀렉터 제네릭 + fetch_config 범용 옵션 (사이트 전용 분기 없음, autoscraper 폐기)
 - [x] 학과 정의 DeptInfo→DB(`depts`)
 - [x] 요약 = 폰 Gemma E2B→E4B→(포기|Clova), JSON 완화, 동적 길이
 - [x] OCR = 이미지 있을 때만, Tesseract/Paddle 온디맨드, 실패시 알림만

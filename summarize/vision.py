@@ -7,10 +7,13 @@ to_data_url(url): 이미지 URL을 받아 (다운스케일 후) base64 data URL�
   - 실패(네트워크/디코딩)는 None 반환 → 호출부에서 no_content 처리(예외 안 던짐).
 """
 import base64
+import logging
 
 import requests
 
 import config
+
+log = logging.getLogger("sauron.vision")
 
 try:
     from PIL import Image           # noqa: F401 (존재 여부 감지용)
@@ -19,17 +22,21 @@ except Exception:
     HAVE_PIL = False                # 없으면 원본 그대로 전송(다운스케일·재인코딩 생략)
 
 
-def to_data_url(url, max_px=None, timeout=None):
+def to_data_url(url, max_px=None, timeout=None, session=None):
+    """이미지 URL → data URL. 이미지가 아니면(로그인 페이지 HTML 등) None.
+    session: 로그인이 필요한 사이트(수집 플러그인)는 그 세션으로 받아야 진짜 파일이 온다
+             (예: 슈패스 첨부는 로그인 없이 받으면 로그인 페이지 HTML이 온다)."""
     if not url:
         return None
     max_px = max_px or config.LLM_VISION_MAX_PX
     timeout = timeout or config.REQUEST_TIMEOUT
     try:
-        r = requests.get(url, timeout=timeout, headers={"User-Agent": config.USER_AGENT})
+        r = (session or requests).get(url, timeout=timeout, headers={"User-Agent": config.USER_AGENT})
         r.raise_for_status()
         raw = r.content
-        mime = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
-    except Exception:
+        mime = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    except Exception as e:
+        log.info("[이미지 제외] 받기 실패 %s: %s", url[:100], e)
         return None
     # 초소형 이미지(아이콘·1x1·썸네일) 컷 + 다운스케일. 비전 런타임 크래시/무의미 입력 방지.
     #   실측: 첨부가 PDF뿐인 공지의 파일아이콘(~1KB)이 비전 LiteRT 텐서버퍼를 크래시시킴 → 여기서 걸러 텍스트로 처리.
@@ -44,10 +51,17 @@ def to_data_url(url, max_px=None, timeout=None):
             buf = io.BytesIO()
             im.save(buf, "JPEG", quality=85)
             raw, mime = buf.getvalue(), "image/jpeg"
-        except Exception:
-            pass                                 # 디코딩 실패 → 원본 그대로(느리지만 동작)
-    elif len(raw) < config.LLM_VISION_MIN_BYTES:
-        return None                              # Pillow 없음 → 바이트 크기로 근사 컷
+        except Exception as e:
+            # 디코딩이 안 되면 이미지가 아니다(로그인 페이지 HTML 등). 그대로 보내면 서버가
+            # 'Failed to decode image'로 요약 전체를 실패시킨다(실측) → 이미지 없이 텍스트만으로.
+            log.info("[이미지 제외] 이미지가 아님(%s, %dB) %s: %s", mime or "?", len(raw), url[:100], e)
+            return None
+    else:
+        if not mime.startswith("image/"):
+            log.info("[이미지 제외] 이미지가 아님(%s) %s", mime or "?", url[:100])
+            return None
+        if len(raw) < config.LLM_VISION_MIN_BYTES:
+            return None                          # Pillow 없음 → 바이트 크기로 근사 컷
     try:
         b64 = base64.b64encode(raw).decode("ascii")
     except Exception:

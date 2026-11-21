@@ -1,0 +1,33 @@
+{
+    auto_https disable_redirects
+    # 공유기가 외부 443 → 이 기기 8443 으로 넘긴다. Caddy는 https 포트를 8443으로 알고 있어야
+    # TLS-ALPN 인증(외부 443으로 들어옴)을 이 리스너에서 처리한다.
+    https_port 8443
+}
+
+your-domain.example.com {
+    tls {
+        issuer acme {
+            # 80번은 열 수 없음(포트포워딩 없음·특권 포트) → HTTP 인증은 시도조차 하지 않고 TLS-ALPN만 쓴다
+            disable_http_challenge
+        }
+    }
+    # 접근 로그(JSON 1줄/요청). 플래시 마모 방지: 10MiB마다 회전, 5개·30일만 보관(최대 ~60MiB).
+    # ★ MCP 키가 X-API-Key / Authorization 헤더로 오므로 로그에 쓰기 전에 지운다(키 유출 방지).
+    log {
+        output file /var/log/caddy/mcp-access.log {
+            roll_size 10MiB
+            roll_keep 5
+            roll_keep_for 720h
+        }
+        format filter {
+            wrap json
+            fields {
+                request>headers>X-Api-Key delete
+                request>headers>Authorization delete
+                request>headers>Cookie delete
+            }
+        }
+    }
+    reverse_proxy localhost:8765
+}

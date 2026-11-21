@@ -49,22 +49,33 @@ def _get_bool(key, default):
 DB_PATH = _get("SAURON_DB", os.path.join(_HERE, "db", "notice.db"))
 
 # ── 요약 LLM (OpenAI 호환) ───────────────────────────
-# 개발: http://192.168.50.153:8000/v1 · 배포(Note20): http://localhost:8000/v1
-LLM_BASE_URL = _get("LLM_BASE_URL", "http://192.168.50.153:8000/v1")
+# 기본은 같은 기기의 로컬 서버. 다른 기기의 서버를 쓰면 설정 파일에서 덮어쓴다(개발 PC의 LAN 주소 등).
+LLM_BASE_URL = _get("LLM_BASE_URL", "http://localhost:8080/v1")
 LLM_API_KEY = _get("LLM_API_KEY", "sk-none")          # 로컬 런타임은 보통 불필요
 # 'auto'(기본) = 시작 시 서버에 로드된 모델을 1회 조회해 자동 확정(/health → /v1/models).
-#   특정 모델을 강제하려면 정확한 이름을 넣는다. 확인: curl http://192.168.50.153:8000/v1/models
+#   특정 모델을 강제하려면 정확한 이름을 넣는다. 확인: curl <LLM_BASE_URL>/models
 LLM_MODEL = _get("LLM_MODEL", "auto")
 LLM_MODEL_FALLBACK = _get("LLM_MODEL_FALLBACK", "")    # 품질 미달 시 승격. 빈값=미사용
-# 타임아웃(초): connect=서버 연결 대기, read=스트리밍 중 바이트 간 최대 침묵, wall=한 요약 총 상한.
-# 이 기기는 GPU라 첫 토큰 5~15초 → read 20이면 충분. 서버 다운 시 connect 10초로 빠르게 실패.
+# ── 클라우드 폴백 (Google AI Studio, 무료 티어) ─────────
+# 로컬 LLM이 어떤 이유로든(연결·시간초과·서버오류·검증실패·모델오류) 최종 실패하면 여기로 한 번 더 요약한다.
+# Gemini API의 OpenAI 호환 엔드포인트를 쓴다(같은 /chat/completions 클라이언트 재사용).
+# 키는 secrets/config.json의 LLM_CLOUD_API_KEY에만 둔다(커밋 금지). 키가 비면 폴백 비활성.
+LLM_CLOUD_BASE_URL = _get("LLM_CLOUD_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai")
+LLM_CLOUD_API_KEY = _get("LLM_CLOUD_API_KEY", "")
+LLM_CLOUD_MODEL = _get("LLM_CLOUD_MODEL", "gemini-flash-lite-latest")   # 무료 티어·빠름. 목록: GET <base>/models
+LLM_CLOUD_FALLBACK = _get_bool("LLM_CLOUD_FALLBACK", True)              # 키가 있어도 끄려면 false
+# 타임아웃(초): connect=서버 연결 대기, read=스트리밍 중 바이트 간 최대 침묵(★첫 토큰 대기 포함), wall=한 요약 총 상한.
+# read는 '첫 토큰이 나올 때까지'도 포함한다. 긴 본문+이미지는 폰에서 prefill만 20초를 넘긴다(실측: 첫 토큰 최대 15.8s 성공,
+# 6천자+이미지 3건은 20s에서 잘림 — requests는 이 경우 ReadTimeout이 아니라 ConnectionError를 낸다). wall이 멈춤을 따로 잡는다.
 LLM_CONNECT_TIMEOUT = _get_int("LLM_CONNECT_TIMEOUT", 10)
-LLM_TIMEOUT = _get_int("LLM_TIMEOUT", 20)              # read timeout
-LLM_WALL_TIMEOUT = _get_int("LLM_WALL_TIMEOUT", 120)   # 한 요약 총 벽시계 상한(반복폭주 방지)
+# 동시 4슬롯(-np 4) 실측(2026-11-11, 이미지 공지 20건): 첫 토큰 최대 118s, 생성 200~300토큰 ≈ 60~75s(건당 ≈4 t/s).
+#   120/120 에서는 벽시계 절단 44회·읽기 시간초과 6회 → 요약이 첫 줄만 남는 일이 생김. 그래서 150/300.
+LLM_TIMEOUT = _get_int("LLM_TIMEOUT", 150)             # read timeout(첫 토큰 대기 포함)
+LLM_WALL_TIMEOUT = _get_int("LLM_WALL_TIMEOUT", 300)   # 한 요약 총 벽시계 상한(반복폭주 방지)
 # /상태 의 백엔드 생존 점검(probe_backend) 타임아웃. 디스코드 응답 예산(defer 후 15분이지만
 # 사용자 체감 상 수 초) 안에 끝나야 하므로 요약용 타임아웃과 따로 짧게 둔다.
 LLM_STATUS_TIMEOUT = _get_int("LLM_STATUS_TIMEOUT", 4)
-LLM_MAX_CONCURRENCY = _get_int("LLM_MAX_CONCURRENCY", 1)  # 폰=단일슬롯. 확장 시 상향
+LLM_MAX_CONCURRENCY = _get_int("LLM_MAX_CONCURRENCY", 4)  # = llama-server 슬롯 수(-np 4 -kvu). 동시 4건 총 17.6 t/s(실측)
 LLM_MAX_INPUT_CHARS = _get_int("LLM_MAX_INPUT_CHARS", 6000)  # 초과 시 선축소/절단
 LLM_STREAM = _get_bool("LLM_STREAM", True)             # litertlm 서버는 스트리밍 사용(검증된 형태)
 LLM_MAX_TOKENS = _get_int("LLM_MAX_TOKENS", 2048)      # 출력 상한. 잘리면 상향
@@ -81,15 +92,17 @@ LLM_RETRY_LIMIT = _get_int("LLM_RETRY_LIMIT", 1)
 LLM_RETRY_WAIT_SEC = _get_int("LLM_RETRY_WAIT_SEC", 5)   # 연결 실패 시 재시도 전 대기(초)
 
 # ── 멀티모달(비전) — 이미지 대체 공지 구제 ─────────────
-#  본문·OCR 모두 없고 이미지만 있는 공지(제목O·본문X·그림O)를 비전 LLM으로 요약 시도.
+#  본문 없이 이미지만 있는 공지(제목O·본문X·그림O)를 비전 LLM으로 요약 시도.
 #  ⚠ 2B 비전은 정확도 한계(브랜드/날짜 오독·환각 관측). '없는 것보단 낫다 + 면책문구' 관점의 best-effort.
 #  반복붕괴는 strip_degenerate가, 언어이탈은 검증기가 잡고, 실패 시 리롤(프롬프트 미세변형).
 # 공지에 이미지가 있으면 요약 요청에 '무조건' 첨부(텍스트 유무·글자수 무관). 프롬프트는 텍스트용과 공유
 # — LLM_USER_TEMPLATE 하나로 텍스트+이미지 함께 넘기면 모델이 알아서 이미지를 참고한다(비전 전용 프롬프트 X).
-LLM_VISION = _get_bool("LLM_VISION", True)                    # 이미지 첨부 on/off
+# ★ 로컬 LLM 비전은 끈다(docs/local_llm_ocr_plan.md §0): E4B 비전은 빽빽한 표의 날짜를 지어냄 → 이미지는 OCR 텍스트로.
+#   False여도 이미지는 내려받아 OCR 입력·클라우드 폴백(비전)에 쓴다. True면 예전처럼 로컬 LLM에도 이미지를 첨부.
+LLM_VISION = _get_bool("LLM_VISION", False)                   # 로컬 LLM에 이미지 첨부 on/off
 # ⚠ 다운스케일 트레이드오프(probe 실측): 768~1024는 포스터 날짜를 정독하면서 다중이미지 페이로드를 크게 줄인다
 #   (2479px 원본 3장 ~3MB → ~0.5MB). 512는 글자가 뭉개져 '환각 날짜'가 나옴 → 768 미만 금지.
-#   조밀한 표까지 정밀 추출이 필요하면 다운스케일이 아니라 타일링/OCR로. Pillow 없으면 이 값 무시(원본 전송).
+#   조밀한 표까지 정밀 추출이 필요하면 다운스케일이 아니라 타일링으로. Pillow 없으면 이 값 무시(원본 전송).
 LLM_VISION_MAX_PX = _get_int("LLM_VISION_MAX_PX", 1024)       # 전송 전 최대 변(px)
 LLM_VISION_MAX_IMAGES = _get_int("LLM_VISION_MAX_IMAGES", 4)  # 한 요청 최대 이미지 수(컨텍스트/지연 상한)
 # 아이콘·썸네일 등 초소형 이미지는 비전에 안 넣는다(LiteRT 텐서버퍼 크래시·무의미 입력 방지).
@@ -99,6 +112,40 @@ LLM_VISION_MIN_BYTES = _get_int("LLM_VISION_MIN_BYTES", 3000)
 # 이미지가 첨부될 때만 프롬프트에 덧붙는 지시(텍스트 전용 요약엔 안 붙어 '이미지' 오해 방지).
 LLM_VISION_HINT = _get("LLM_VISION_HINT",
                        "\n- 첨부된 포스터 이미지 안의 날짜·주요일정·대상·표 내용을 읽어 요약에 반영할 것.")
+
+# ── OCR (이미지 공지 → 텍스트, docs/local_llm_ocr_plan.md) ─────────────────────
+# RapidOCR + MNN. 크롤러 프로세스 안에서 OCR 워커 1개가 직렬로 돈다(LLM 큐를 막지 않는다).
+OCR_ENABLE = _get_bool("OCR_ENABLE", True)
+OCR_BACKEND = _get("OCR_BACKEND", "VULKAN")          # VULKAN(GPU, 기본) | CPU. OpenCL(rusticl)은 동작 안 함(실측)
+OCR_CPUS = _get("OCR_CPUS", "0-3")                   # 전·후처리 스레드를 작은 코어에 고정(큰 코어=LLM 몫)
+OCR_THREADS = _get_int("OCR_THREADS", 4)             # MNN numThread(CPU 백엔드일 때 의미)
+OCR_TIMEOUT = _get_int("OCR_TIMEOUT", 60)            # 이미지 1장 상한(초). GPU 실측 장당 1.5~7.4s
+OCR_MIN_CHARS = _get_int("OCR_MIN_CHARS", 20)        # 공지 전체 OCR 글자가 이보다 적으면 '판독 실패'(디자인 포스터 등)
+# 신뢰도(RapidOCR 박스 점수, 글자수 가중 평균). 실측: 정상 판독 0.88~0.98 · 디자인 포스터(깨진 글자) 0.71.
+#   공지 전체가 OCR_MIN_SCORE 미만이면 '판독 실패'(글자수가 충분해도) → 로컬 생략. 박스 단위로는 OCR_BOX_MIN_SCORE 미만을 버린다.
+OCR_MIN_SCORE = float(_get("OCR_MIN_SCORE", "0.80"))
+OCR_BOX_MIN_SCORE = float(_get("OCR_BOX_MIN_SCORE", "0.50"))
+OCR_MAX_CHARS = _get_int("OCR_MAX_CHARS", 6000)      # 프롬프트에 붙일 OCR 텍스트 총 상한(본문 LLM_MAX_INPUT_CHARS와 별도)
+OCR_MAX_CONSEC_FAIL = _get_int("OCR_MAX_CONSEC_FAIL", 3)  # 엔진 오류가 연속 이만큼이면 OCR 끄고 이미지 공지는 폴백 경로로
+OCR_IDLE_RELEASE_SEC = _get_int("OCR_IDLE_RELEASE_SEC", 900)  # 이만큼 안 쓰면 엔진 반납(≈0.4GB 회수). 0=반납 안 함
+# OCR 텍스트를 붙일 때 프롬프트 끝에 덧붙는 지시.
+LLM_OCR_HINT = _get("LLM_OCR_HINT",
+                    "\n- [첨부 이미지 OCR] 은 공지 이미지에서 기계로 읽은 글자다. 줄·칸이 섞였거나 오타가 있을 수 있으니 "
+                    "날짜·시간·대상·장소·신청방법을 우선 추출하고, 확실하지 않은 숫자는 지어내지 말 것.")
+
+# ── 마감일 (summarize/deadline.py, LLM-as-Jev: 원문에서 뽑은 날짜 중 '고르기'만 LLM) ──
+#   디스코드에는 '⏰ <날짜> 까지 · <N일 후/전> 마감' (보는 사람 화면에서 저절로 바뀜, 메시지 수정 없음).
+#   마감이 없거나 모르면 줄 자체를 뺀다. MCP 에는 deadline 필드(+ 확률)로 나간다.
+DEADLINE_ENABLE = _get_bool("DEADLINE_ENABLE", True)
+# 행사·시험의 '일시'를 마감으로 고르던 문제(실측 30건 중 2건) → 신청·제출류로 한정하고 행사 일시는 제외라고 명시
+DEADLINE_QUESTION = _get("DEADLINE_QUESTION",
+                         "학생이 지금 해야 하는 일(신청·접수·제출·등록·납부·회신 등)의 마감일은 무엇인가? "
+                         "행사·설명회·시험이 열리는 일시 자체는 마감일이 아니다.")
+DEADLINE_MIN_PROB = float(_get("DEADLINE_MIN_PROB", "0.8"))      # 고른 선택지 확률이 이보다 낮으면 unknown(표시 안 함)
+DEADLINE_MAX_CHOICES = _get_int("DEADLINE_MAX_CHOICES", 16)      # 날짜 후보 상한(이른 날짜부터)
+DEADLINE_MAX_INPUT_CHARS = _get_int("DEADLINE_MAX_INPUT_CHARS", 6000)
+DEADLINE_SNIPPET_CHARS = _get_int("DEADLINE_SNIPPET_CHARS", 36)  # 선택지마다 붙이는 원문 문맥 길이(토큰=시간)
+DEADLINE_TIMEOUT = _get_int("DEADLINE_TIMEOUT", 300)             # 출력 1토큰 → 거의 전부 프롬프트 처리 시간(≈15토큰/s, 긴 공지 단독 100s+)
 
 # 언어 이탈 검사(결정론) — 2B judge가 못 잡는 외국어 혼입/붕괴를 코드로 차단.
 LLM_ENFORCE_KOREAN = _get_bool("LLM_ENFORCE_KOREAN", True)
@@ -114,7 +161,7 @@ LLM_SYSTEM_PROMPT = (
 )
 LLM_USER_TEMPLATE = """다음 학사공지를 개조식 불릿으로 요약해줘.
 - 각 항목은 '- '로 시작하는 한 줄. 하위 불릿(들여쓰기)은 쓰지 말고 최상위 불릿만.
-- 문장은 '4학년 대상', '신청 가능'처럼 종결어미 생략 또는 '~함/~임/~바람'.
+- 문장은 종결어미를 생략한 명사형 또는 '~함/~임/~바람'으로 끝낸다. 공지에 없는 대상·조건을 지어내지 말 것.
 - 분량은 공지 정보량에 따라 2줄에서 6줄 사이를 유지. 핵심만 추리고 세부 조건·목록을 전부 나열하지 말 것.
 - 주요일정·대상·신청방법을 우선 포함. 장소·주의사항은 정말 중요할 때만.
 - 인사말·설명·머리말 없이 불릿만 출력.
@@ -125,16 +172,14 @@ LLM_USER_TEMPLATE = """다음 학사공지를 개조식 불릿으로 요약해�
 [본문]
 {body}"""
 
-# ── Clova 폴백(요약 실패건 한정) ─────────────────────
-CLOVA_ENABLE = _get_bool("CLOVA_ENABLE", False)
-
-# ── OCR ──────────────────────────────────────────────
-OCR_BACKEND = _get("OCR_BACKEND", "none")   # 'tesseract' | 'paddle' | 'none'
-OCR_LANG = _get("OCR_LANG", "kor")
-OCR_TIMEOUT = _get_int("OCR_TIMEOUT", 60)
 
 # ── 크롤 ─────────────────────────────────────────────
-UPDATE_LIMIT = _get_int("UPDATE_LIMIT", 5)      # 신규가 이보다 많으면 사이트깨짐 의심→대량알림 차단
+UPDATE_LIMIT = _get_int("UPDATE_LIMIT", 10)     # 신규가 이보다 많으면 사이트깨짐 의심→대량알림 차단
+# 수집 실패 알림: 연속 이 횟수만큼 실패해야 알린다. 사이트가 가끔 끊겼다 살아나는 것(일시 장애)으로
+# 실패·복구 알림이 왕복하는 걸 막는다(실측: 한 사이트가 하루 9번 왕복 = 18통). 3회 ≈ 30분(크롤주기 10분).
+CRAWL_FAIL_ALERT_AFTER = _get_int("CRAWL_FAIL_ALERT_AFTER", 3)
+# 알린 뒤에도 같은 원인이 계속되면 이 간격마다 '아직 실패 중' 한 번.
+CRAWL_FAIL_REMIND_SEC = _get_int("CRAWL_FAIL_REMIND_SEC", 6 * 3600)
 SEED_PAGES = _get_int("SEED_PAGES", 3)          # depts.seed_pages 없을 때 기본
 JSON_API_SCAN_PAGES = _get_int("JSON_API_SCAN_PAGES", 12)  # json_api 본문 캐시 미스 시 훑을 최대 페이지수(깊은페이지 재처리)
 REQUEST_TIMEOUT = _get_int("REQUEST_TIMEOUT", 30)          # read timeout(초): 연결 후 응답 대기
@@ -150,7 +195,6 @@ BOT_PRESENCE_INTERVAL_SEC = _get_int("BOT_PRESENCE_INTERVAL_SEC", 120)
 USER_AGENT = _get("USER_AGENT",
                   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
-INFOCOM_RETRY = _get_int("INFOCOM_RETRY", 3)    # 학교서버 버그 F5 흉내 재시도 횟수
 
 # ── 로깅 ───────────────────────────────────────
 # 콘솔 + logs/ 에 일자별 회전 파일(자정 롤오버). sauron.sh는 redirect 없이 실행하면 됨.
@@ -168,6 +212,18 @@ DEBUG_GUILD_ID = _get("DEBUG_GUILD_ID", DISCORD_GUILD_ID)
 PROD_GUILD_ID = _get("PROD_GUILD_ID", "")
 DISCORD_CHANNEL_PREFIX = _get("DISCORD_CHANNEL_PREFIX", "")  # 학과 채널명 접두(선택)
 
+# 발송 시점. True(기본) = 요약이 끝난 뒤 '제목+요약+링크'를 한 번에 보낸다 → 폰 푸시 미리보기에
+#   요약이 그대로 보인다. False = 제목+링크를 먼저 보내고 요약이 오면 그 메시지를 수정(2단 발송).
+#   어느 쪽이든 공지가 누락되지는 않는다: 요약이 실패하면 실패 문구를 넣어 그대로 보내고,
+#   발송 전에 프로세스가 죽으면 공지는 '미완'으로 남아 다음 부팅 때 재적재된다(core/queue.py).
+#   요약을 기다리는 만큼 발송은 늦어진다(요약 1건 ≈ 수십 초, 상한 LLM_WALL_TIMEOUT).
+SEND_AFTER_SUMMARY = _get_bool("SEND_AFTER_SUMMARY", True)
+# 종류(kind)별 채널 카테고리 이름. major는 학과의 college(단과대) 이름을 쓴다.
+#   이름을 바꾸면 setup_guild가 새 카테고리를 만들지 않고 기존 카테고리의 이름을 바꾼다(권한·위치 유지).
+# general은 구독 화면의 이름으로도 쓴다("① 홍보센터 공지" 등) — 여기 하나만 바꾸면 전부 바뀐다.
+GENERAL_CATEGORY_NAME = _get("GENERAL_CATEGORY_NAME", "홍보센터")
+ETC_CATEGORY_NAME = _get("ETC_CATEGORY_NAME", "기타")
+
 # 통합공지(mono, --dst mono 대상)·감시(디버그) 채널 — 둘 다 setup_guild가 '이름'으로
 #   자동 생성/재사용하고 그 채널ID를 DB(app_meta: mono_channel_id·debug_channel_id)에 저장한다.
 #   런타임은 build_components가 DB에서 읽어 Notifier에 주입 → 사람이 채널ID를 secrets에 손으로
@@ -179,15 +235,18 @@ DEBUG_CHANNEL_NAME = _get("DEBUG_CHANNEL_NAME", "Sauron-Debug")
 DEV_CATEGORY_NAME = _get("DEV_CATEGORY_NAME", "developers")
 DEV_ROLE_NAME = _get("DEV_ROLE_NAME", "developers")
 
-# 디버그 모드 단일 식별자. 라우팅은 config가 아니라 '실행 플래그'로만 결정(안전).
-DEBUG_EN = True
+# 디버그 서버 사용 여부. DEBUG_GUILD_ID/PROD_GUILD_ID를 둘 다 쓸 때만 의미가 있다(기본: 꺼짐).
+#   스크립트는 --debug / --prod 플래그가 이 값보다 우선한다(debug_from_argv).
+DEBUG_EN = _get_bool("DEBUG_EN", False)
 
-ICON_DEFAULT = _get("ICON_DEFAULT", "https://ssu.ac.kr/wp-content/uploads/2019/05/suu_emblem1.jpg")
-# 비-공지(디버그·자체공지 등 '사우론의 눈' footer) 임베드용 아이콘.
-#   ICON_DEBUG_FILE 이 존재하면 그 로컬 이미지를 attachment://로 업로드해 쓴다(URL 만료 회피).
-#   없으면 ICON_DEBUG(URL)로 폴백. ⚠ Discord 첨부 CDN URL은 ex/is/hm 서명이 있어 ~24h면 만료됨.
-ICON_DEBUG_FILE = _get("ICON_DEBUG_FILE", os.path.join(_HERE, "assets", "icon_debug.png"))
-ICON_DEBUG = _get("ICON_DEBUG", "https://cdn.discordapp.com/attachments/1355611235156234473/1537041889218400296/image.png?ex=6a7d994f&is=6a7c47cf&hm=72fdd9f143fac98370855ed7ccd6d51a85a00233edf9c23f4c72a87ecc3e899f&")
+# 봇이 스스로 쓰는 표시 이름(디버그·자체 안내 임베드 footer).
+BOT_DISPLAY_NAME = _get("BOT_DISPLAY_NAME", "사우론의 눈")
+# 공지 임베드 footer 아이콘: 학과 행의 icon_url이 우선, 없으면 이 값(빈값 = 아이콘 없음).
+#   학교 로고 같은 배포처별 값이라 코드 기본값은 비워 둔다.
+ICON_DEFAULT = _get("ICON_DEFAULT", "")
+# 디버그 임베드 footer 아이콘 URL(빈값 = 아이콘 없음). 파일 첨부는 쓰지 않는다 —
+#   첨부가 있으면 폰 푸시가 '이미지를 보냈습니다'로 덮여 무슨 문제인지 안 보인다(notify/notifier.py).
+ICON_DEBUG = _get("ICON_DEBUG", "")
 
 
 def active_guild_id(debug=None):

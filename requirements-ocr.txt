@@ -1,0 +1,10 @@
+# ── 이미지 공지 OCR (summarize/ocr.py, docs/local_llm_ocr_plan.md) — 선택 ──
+# MNN 은 PyPI 휠에 Vulkan 이 없어 소스 빌드 휠을 따로 설치한다(deploy.py [2b] 가 MNN_WHEEL 경로로 설치).
+#   예: ~/llm/ocr/MNN/pymnn/pip_package/dist/mnn_vulkan_opencl-3.6.2-cp313-cp313-linux_aarch64.whl
+# onnxruntime 은 불필요(엔진은 MNN). 버전은 c1q 실측 환경(~/llm/ocr/.venv)과 동일하게 고정.
+rapidocr==3.10.0
+opencv-python-headless==5.0.0.93
+numpy==2.5.4
+omegaconf==2.4.0
+pyclipper==1.4.0
+shapely==2.2.0

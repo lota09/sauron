@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-deploy.py — 대상 기기(Note20 등)에서 git clone '이후' 실행하는 세팅 마법사 (멱등).
+deploy.py — 대상 기기(서버·휴대폰 등)에서 git clone '이후' 실행하는 세팅 마법사 (멱등).
 
-배포 모델: 대상에서 `git clone <repo>` → `cd sauron_rb2` → `python3 deploy.py`.
+배포 모델: 대상에서 `git clone <repo>` → `cd <클론 디렉터리>` → `python3 deploy.py`.
+다른 학교: init/depts_seed.csv 를 자기 학교 사이트로 채운 뒤 같은 절차(README '새 학교에 도입' 참고).
 전송은 git이 담당(추적 파일만 = secrets 실값·notice.db 제외). 이 스크립트는 그 위에서
 가상환경·의존성·secrets·DB·디스코드 채널·시딩까지 한 번에 세팅한다. 여러 번 돌려도 안전.
 각 단계는 실패하면 즉시 중단(다음 단계로 진행 안 함). 단, 의도적 스킵(토큰 미입력,
@@ -13,13 +14,21 @@ setup_guild 진행 '아니오')은 실패가 아니라 건너뛰기로 계속 �
   1) 가상환경 생성 여부(Y) + 이름(기본 .venv)   — 이미 있으면 재사용
   2) 활성 venv로 pip install -r requirements.txt (discord.py 포함, 설치 한 방)
   3) secrets 입력: 봇 토큰 / DISCORD_GUILD_ID / LLM_BASE_URL
-       기본값 = 기존 파일 값(있으면), LLM_BASE_URL 없으면 http://localhost:8000/v1
+       기본값 = 기존 파일 값(있으면), LLM_BASE_URL 없으면 http://localhost:8080/v1
   4) DB 초기화: init/seed_db.py (schema + depts_seed.csv의 학과 upsert)
        ★ setup_guild가 depts 테이블을 읽어 학과 채널을 만들므로 반드시 이 단계가 먼저.
-  5) setup_guild --dry → 만들 게 있으면 확인 후 실제 생성(통합·감시·학과 채널/역할)
+  3b) 플러그인 비밀: CSV가 쓰는 플러그인(plugins/<이름>.py)이 SECRETS로 선언한 키 중
+       secrets/plugin_<이름>.json 에 빠진 것만 물어서 채운다(이미 있으면 통과).
+  5) setup_guild --dry → 만들 게 있거나 app_meta가 비었으면(--check) 실제 실행
+       ★ '길드에 다 있음'과 'DB에 기록됨'은 다른 문제다. 후자가 비면 런타임이 감시채널을 못 찾는다.
   6) 시딩: main.py once --dst null --nosummary (현재 공지를 '본 것'으로 기록, 무발송)
+  6b) MCP 서버(선택, 기본 아니오): mcp/.venv 생성·의존성 설치 + mcp/config.json(API 키·공개 도메인).
+       이미 있으면 재사용. 이걸 해 둬야 [7]에서 sauron:mcp 가 함께 등록된다.
+       HTTPS 앞단(Caddy)·공유기 포트포워딩은 범위 밖 — mcp/deploy/ 의 예시 참고.
   7) 서비스 등록(선택): systemd / supervisor / 안 함(기본).
        설정파일은 이 스크립트의 절대경로·현재 계정으로 채워 넣고, 이미 있으면 덮어쓴다.
+       서비스 = crawler(수집·요약·발송) · discord(구독 봇) · mcp(공지 MCP 서버, mcp/ 세팅 시에만).
+       supervisor에서는 sauron 그룹으로 묶여 sauron:crawler · sauron:discord · sauron:mcp 로 보인다.
   8) `main.py run --dst poly` 는 실행하지 않고 안내만.
 
 표준 라이브러리만 사용. 대상(POSIX) 기준.
@@ -35,7 +44,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 SECRETS = os.path.join(ROOT, "secrets")
 CONFIG_JSON = os.path.join(SECRETS, "config.json")
 TOKEN_JSON = os.path.join(SECRETS, "discord-api-info.json")
-DEFAULT_LLM = "http://localhost:8000/v1"
+DEFAULT_LLM = "http://localhost:8080/v1"
 
 
 # ── 입출력 헬퍼 ───────────────────────────────────────
@@ -112,6 +121,33 @@ def step_pip(py):
         die("pip 설치 실패 — 로그 확인 후 재실행하세요.")
 
 
+MNN_WHEEL_DEFAULT = os.path.expanduser(
+    "~/llm/ocr/MNN/pymnn/pip_package/dist/mnn_vulkan_opencl-3.6.2-cp313-cp313-linux_aarch64.whl")
+LIBVULKAN = "/usr/lib/aarch64-linux-gnu/libvulkan.so.1"
+
+
+def step_ocr(py, venv_dir):
+    """[2b] 이미지 공지 OCR(선택). Vulkan 포함 MNN 휠이 있을 때만 설치 — 없으면 건너뜀(OCR 없이도 동작:
+    이미지 공지는 클라우드 비전 또는 본문만으로 요약)."""
+    print("\n[2b] 이미지 OCR 의존성 (선택)")
+    wheel = os.environ.get("MNN_WHEEL", MNN_WHEEL_DEFAULT)
+    if not os.path.exists(wheel):
+        print(f"    MNN(Vulkan) 휠 없음: {wheel}\n    → 건너뜀. OCR을 쓰려면 MNN_WHEEL=<휠 경로> 로 다시 실행")
+        return
+    r = run([py, "-m", "pip", "install", wheel, "-r", os.path.join(ROOT, "requirements-ocr.txt")])
+    if r.returncode != 0:
+        print("    ⚠ OCR 의존성 설치 실패 → OCR 없이 계속(config OCR_ENABLE=false 권장)")
+        return
+    # MNN 은 dlopen("libvulkan.so") — 버전 없는 이름을 venv/vklib 에 만들고 sauron.sh 가 LD_LIBRARY_PATH 에 넣는다.
+    vk = os.path.join(ROOT, venv_dir, "vklib")
+    os.makedirs(vk, exist_ok=True)
+    link = os.path.join(vk, "libvulkan.so")
+    if os.path.exists(LIBVULKAN) and not os.path.lexists(link):
+        os.symlink(LIBVULKAN, link)
+    print(f"    → 설치됨 · {link} → {os.path.realpath(link) if os.path.lexists(link) else '없음(libvulkan1 미설치?)'}")
+    print("    (첫 OCR 때 RapidOCR 가 모델 파일을 내려받는다 — 인터넷 필요)")
+
+
 def step_secrets():
     print("\n[3] secrets 입력 (Enter=기본값)")
     cfg = load_json(CONFIG_JSON)
@@ -132,6 +168,30 @@ def step_secrets():
     return bool(guild_id and bot_token)
 
 
+def step_plugin_secrets(py):
+    """CSV의 fetch_type이 쓰는 플러그인 중 비밀이 빠진 것만 입력받는다.
+    어떤 키가 필요한지는 플러그인 클래스의 SECRETS 선언에서 읽는다(venv 파이썬으로 조회)."""
+    print("\n[3b] 플러그인 비밀")
+    r = run([py, "-m", "core.plugin", "missing-secrets"], cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        die(f"플러그인 조회 실패:\n{(r.stdout or '') + (r.stderr or '')}")
+    need = json.loads(r.stdout.strip().splitlines()[-1] or "{}")
+    if not need:
+        print("    → 필요한 플러그인 비밀이 모두 있음")
+        return
+    for name, info in need.items():
+        if "error" in info:
+            die(f"{info['error']} — CSV/설정이 이 플러그인을 쓰지만 파일이 없습니다(plugins/에 넣으세요).")
+        path = os.path.join(ROOT, info["file"])
+        data = load_json(path)
+        print(f"    {name}: {info['file']} 에 {', '.join(info['missing'])} 필요")
+        for k in info["missing"]:
+            data[k] = getpass.getpass(f"      {k} (입력은 화면에 표시되지 않음): ").strip()
+        write_json(path, data)
+        os.chmod(path, 0o600)                 # 로그인 정보 — 소유자만 읽기
+        print(f"    → {info['file']} 저장(권한 600)")
+
+
 def step_db(py):
     print("\n[4] DB 초기화 (schema + 학과 시드) — setup_guild가 depts를 읽으므로 먼저")
     print("    학과 60여 개 정보의 출처: init/depts_seed.csv (git 추적) → seed_db.py가 depts 테이블로 upsert.")
@@ -149,31 +209,114 @@ def step_setup_guild(py, can_run):
             capture_output=True, text=True)
     out = (r.stdout or "") + (r.stderr or "")
     print(out.rstrip())
-    if r.returncode != 0 or "[오류]" in out or "길드 ID 없음" in out:
+    if r.returncode != 0 or "길드 ID 없음" in out:
         die("setup_guild --dry 실패(토큰/서버ID/봇 초대/네트워크 확인).")
-    # 생성 예정 항목이 있는가: dry에서 '...생성] ... (dry)' 라인 존재 여부
-    need = any(("(dry)" in ln and "생성]" in ln) for ln in out.splitlines())
-    if not need:
-        print("    → 이미 모두 세팅됨(생성할 채널/역할 없음).")
+
+    # 실제 실행이 필요한가는 두 가지를 함께 본다.
+    #   (1) 길드에 만들 게 있는가            — dry 출력의 '...생성] ... (dry)' 라인
+    #   (2) DB(app_meta)가 동기화돼 있는가   — --check (디스코드 접속 없이 DB만 확인)
+    # (1)만 보면, 길드엔 채널이 다 있는데 app_meta만 비어 있는 상태에서 '이미 세팅됨'으로 건너뛴다.
+    # 그러면 런타임이 감시채널ID를 못 읽어 디버그·요약실패 알림이 통째로 안 나간다(실제로 겪음).
+    lines = out.splitlines()
+    need_create = any(("(dry)" in ln and "생성]" in ln) for ln in lines)
+    # 카테고리 이름 변경·채널 이동(kind나 카테고리 이름 설정이 바뀐 경우) — 만들 건 없어도 실제 실행이 필요
+    need_change = any(("(dry)" in ln and ("변경]" in ln or "이동" in ln)) for ln in lines)
+    synced = run([py, "-m", "notify.setup_guild", "--check"], cwd=ROOT,
+                 capture_output=True, text=True).returncode == 0
+    if not need_create and not need_change and synced:
+        print("    → 이미 모두 세팅됨(생성·변경할 것 없음 · app_meta 동기화 확인).")
         return
-    if yn("    위 항목을 이대로 생성하며 진행하시겠습니까?", False):
+    if not need_create:
+        print("    → 새로 만들 건 없고 " + ("카테고리 이름·채널 위치 변경" if need_change else "app_meta 채널ID 기록")
+              + "만 반영합니다(권한·카테고리 소급).")
+        ok = True
+    else:
+        ok = yn("    위 항목을 이대로 생성하며 진행하시겠습니까?", False)
+    if ok:
         r2 = run([py, "-m", "notify.setup_guild"], cwd=ROOT)
         if r2.returncode != 0:
-            die("setup_guild 실제 생성 실패.")
+            die("setup_guild 실패(생성 또는 app_meta 기록). 위 출력의 [실패]/트레이스백 확인.")
     else:
         print("    → 사용자 선택으로 건너뜀(실패 아님). 나중에: python -m notify.setup_guild")
 
 
+def _unseeded_depts():
+    """시딩 안 된 활성 학과 수. DB가 없거나 읽을 수 없으면 None."""
+    import sqlite3
+    path = os.path.join(ROOT, "db", "notice.db")
+    if not os.path.exists(path):
+        return None
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            return conn.execute("SELECT COUNT(*) FROM depts WHERE active = 1 AND seeded_at IS NULL").fetchone()[0]
+    except sqlite3.Error:
+        return None
+
+
 def step_seed_notices(py):
     print("\n[6] 시딩 (main.py once --dst null --nosummary) — 현재 공지를 '본 것'으로 기록, 무발송")
+    if _unseeded_depts() == 0:
+        # 다른 기기에서 notice.db를 옮겨 온 경우 등. 여기서 once를 돌리면 '옮기는 동안 새로 올라온 공지'까지
+        # 무발송으로 '본 것'이 되어 누락된다 → 건너뛰고, 운영 시작 후 크롤러가 신규로 처리하게 둔다.
+        print("    → 모든 활성 학과가 이미 시딩됨 → 건너뜀 (그사이 올라온 공지는 운영 시작 후 신규로 발송)")
+        return
     r = run([py, "main.py", "once", "--dst", "null", "--nosummary"], cwd=ROOT)
     if r.returncode != 0:
         die("시딩(once) 실패(네트워크/사이트 확인).")
 
 
+def step_mcp():
+    """MCP 서버는 선택 기능 — 전용 venv(크롤러 의존성과 분리)와 config.json(키)을 만든다. 멱등."""
+    have = _mcp_ready()
+    if not yn(f"\n[6b] MCP 서버(공지를 AI 도구에서 조회)도 세팅할까요?{' (이미 세팅됨)' if have else ''}", have):
+        print("    → 건너뜀(실패 아님)")
+        return
+    vdir = os.path.join(MCP_DIR, ".venv")
+    if not os.path.exists(MCP_PY):
+        r = run([sys.executable, "-m", "venv", vdir])
+        if r.returncode != 0 or not os.path.exists(MCP_PY):
+            die("mcp/.venv 생성 실패 (python3-venv 필요)")
+    r = run([MCP_PY, "-m", "pip", "install", "-r", os.path.join(MCP_DIR, "requirements.txt")])
+    if r.returncode != 0:
+        die("MCP 의존성 설치 실패 — 로그 확인 후 재실행하세요.")
+
+    path = os.path.join(MCP_DIR, "config.json")
+    cfg = load_json(path) or load_json(os.path.join(MCP_DIR, "config.example.json"))
+    key = cfg.get("api_key", "")
+    if not key.startswith("srn_"):            # 예시 문구 그대로면 새로 만든다
+        import secrets
+        key = "srn_" + secrets.token_urlsafe(32)
+        print("    → API 키 새로 생성 (기존 서버에서 옮겨 오는 중이면 그 키를 넣어야 테스터 설정이 그대로 유지됩니다)")
+    cfg["api_key"] = ask("    API 키", key, secret=True)
+    hosts = [h for h in cfg.get("allowed_hosts", []) if "example" not in h]
+    domain = ask("    외부 공개 도메인(없으면 Enter — 이 기기 안에서만 사용)", hosts[0] if hosts else "")
+    cfg["allowed_hosts"] = [domain] if domain else []
+    write_json(path, cfg)
+    os.chmod(path, 0o600)
+    print("    → mcp/config.json 저장(권한 600). [7]에서 sauron:mcp 로 등록됩니다.")
+
+
 # ── 서비스 등록(systemd / supervisor) ────────────────
 SYSTEMD_DIR = "/etc/systemd/system"
 SUPERVISOR_DIR = "/etc/supervisor/conf.d"
+MCP_DIR = os.path.join(ROOT, "mcp")
+MCP_PY = os.path.join(MCP_DIR, ".venv", "bin", "python")
+
+
+def _mcp_ready():
+    """MCP 서버는 선택 기능 — mcp/ 에 전용 venv와 config.json(키)을 만들어 둔 경우에만 서비스로 등록한다."""
+    return os.path.exists(MCP_PY) and os.path.exists(os.path.join(MCP_DIR, "config.json"))
+
+
+def _services():
+    """(이름, 설명, 실행 명령, 작업 디렉터리). crawler·discord는 sauron.sh --fg, mcp는 자체 venv로 직접 실행.
+    mcp는 DB를 읽기만 하는 별개 프로세스라 기동 순서 의존이 없고, nice 10으로 크롤러·LLM보다 양보한다."""
+    sh = os.path.join(ROOT, "sauron.sh")
+    svcs = [("crawler", "공지 크롤러(수집·요약·디스코드 발송)", f"{sh} --fg --nobot", ROOT),
+            ("discord", "디스코드 구독 봇", f"{sh} --fg --bot", ROOT)]
+    if _mcp_ready():
+        svcs.append(("mcp", "공지 MCP 서버(읽기 전용, 127.0.0.1)", f"/usr/bin/nice -n 10 {MCP_PY} server.py", MCP_DIR))
+    return svcs
 
 
 def _is_root():
@@ -205,7 +348,12 @@ def _write_root(path, content):
                           stdout=subprocess.DEVNULL).returncode == 0
 
 
-def _systemd_unit(desc, args, user, venv):
+# 사우론 서비스는 효율 코어(A55, 0-3)에 고정 — 성능 코어(4-7)는 로컬 LLM(llama-server) 몫.
+#   llama 쪽 고정은 여기서 건드리지 않는다(그 서비스가 자체 설정).
+SAURON_CPUS = "0-3"
+
+
+def _systemd_unit(desc, command, workdir, user, venv):
     """경로·계정·venv 이름을 현재 배포 실체에 맞춰 박아 넣는다."""
     return f"""[Unit]
 Description={desc}
@@ -215,10 +363,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 User={user}
-WorkingDirectory={ROOT}
+WorkingDirectory={workdir}
 Environment=VENV_DIR={venv}
 Environment=PYTHONUNBUFFERED=1
-ExecStart={os.path.join(ROOT, "sauron.sh")} {args}
+ExecStart={command}
+CPUAffinity={SAURON_CPUS}
 Restart=always
 RestartSec=10
 KillMode=mixed
@@ -230,15 +379,13 @@ WantedBy=multi-user.target
 
 
 def _supervisor_conf(user, venv):
-    sh = os.path.join(ROOT, "sauron.sh")
-
-    def prog(name, args, desc):
+    def prog(name, desc, command, workdir):
         return f"""[program:{name}]
 ; {desc}
-command={sh} {args}
-directory={ROOT}
+command=taskset -c {SAURON_CPUS} {command}
+directory={workdir}
 user={user}
-environment=VENV_DIR="{venv}",PYTHONUNBUFFERED="1"
+environment=HOME="{os.path.expanduser('~' + user)}",VENV_DIR="{venv}",PYTHONUNBUFFERED="1"
 autostart=true
 autorestart=true
 startsecs=10
@@ -248,25 +395,24 @@ stopwaitsecs=30
 stopasgroup=true
 killasgroup=true
 redirect_stderr=true
-stdout_logfile=/var/log/supervisor/{name}.log
+stdout_logfile=/var/log/supervisor/sauron-{name}.log
 stdout_logfile_maxbytes=10MB
 stdout_logfile_backups=5
 """
 
-    return (f"; sauron_rb2 — deploy.py 자동 생성 (경로/계정은 배포 위치 기준)\n\n"
-            + prog("sauron-crawler", "--fg --nobot", "공지 크롤러") + "\n"
-            + prog("sauron-bot", "--fg --bot", "구독 봇") + "\n"
-            + "[group:sauron]\nprograms=sauron-crawler,sauron-bot\n")
+    svcs = _services()
+    return (f"; sauron — deploy.py 자동 생성 (경로/계정은 배포 위치 기준)\n"
+            f"; supervisorctl 에서 sauron:<이름> 으로 보인다. 그룹 전체: sauron:*\n\n"
+            + "\n".join(prog(*s) for s in svcs) + "\n"
+            + f"[group:sauron]\nprograms={','.join(s[0] for s in svcs)}\n")
 
 
 def _install_systemd(user, venv):
     if not shutil.which("systemctl"):
         print("    ⚠ systemctl 없음(이 시스템은 systemd가 아님) → 등록 건너뜀.")
         return
-    units = {
-        "sauron-crawler.service": _systemd_unit("sauron 공지 크롤러", "--fg --nobot", user, venv),
-        "sauron-bot.service": _systemd_unit("sauron 구독 봇", "--fg --bot", user, venv),
-    }
+    units = {f"sauron-{name}.service": _systemd_unit(f"sauron {desc}", command, workdir, user, venv)
+             for name, desc, command, workdir in _services()}
     for name, body in units.items():
         path = os.path.join(SYSTEMD_DIR, name)
         had = os.path.exists(path)
@@ -277,8 +423,8 @@ def _install_systemd(user, venv):
         die("systemctl daemon-reload 실패.")
     run(_sudo(["systemctl", "enable", "--now"] + list(units)))
     run(_sudo(["systemctl", "--no-pager", "--lines=0", "status"] + list(units)))
-    print("    관리: sudo systemctl status|restart|stop sauron-crawler sauron-bot")
-    print("    로그: journalctl -u sauron-crawler -f   (앱 로그는 logs/sauron.log · logs/bot.log)")
+    print(f"    관리: sudo systemctl status|restart|stop {' '.join(u[:-8] for u in units)}")
+    print("    로그: journalctl -u sauron-crawler -f   (앱 로그는 logs/sauron.log · logs/bot.log · mcp/logs/mcp.log)")
 
 
 def _install_supervisor(user, venv):
@@ -294,8 +440,8 @@ def _install_supervisor(user, venv):
         die("supervisorctl reread 실패 — supervisord 미기동일 수 있음: sudo systemctl start supervisor")
     run(_sudo(["supervisorctl", "update"]))          # autostart=true → 여기서 기동
     run(_sudo(["supervisorctl", "status", "sauron:*"]))
-    print("    관리: sudo supervisorctl status|restart|stop sauron:   (그룹은 콜론 필수)")
-    print("    로그: /var/log/supervisor/sauron-*.log   (앱 로그는 logs/sauron.log · logs/bot.log)")
+    print("    관리: sudo supervisorctl status|restart|stop sauron:   (그룹은 콜론 필수 · 개별은 sauron:mcp 등)")
+    print("    로그: /var/log/supervisor/sauron-*.log   (앱 로그는 logs/sauron.log · logs/bot.log · mcp/logs/mcp.log)")
 
 
 def step_service(py, using_venv):
@@ -323,6 +469,24 @@ def step_service(py, using_venv):
     (_install_systemd if sel == "1" else _install_supervisor)(user, venv)
 
 
+def step_restart_running():
+    """이미 떠 있는 서비스는 새 코드·플러그인·학과를 불러오도록 재시작해야 한다(크롤러는 시작할 때만 읽는 것들이 있음).
+    supervisor/systemd에 등록돼 있으면 그쪽으로, 아니면 sauron.sh 로."""
+    running = subprocess.run(["pgrep", "-f", r"main\.py run"], capture_output=True).returncode == 0
+    if not running:
+        return
+    print("\n[8] 이미 실행 중인 서비스가 있습니다 — 이번 변경(코드·플러그인·학과)을 반영하려면 재시작이 필요합니다.")
+    if not yn("    지금 재시작할까요?", True):
+        print("    → 건너뜀. 나중에: sudo supervisorctl restart sauron:  (또는 bash sauron.sh restart)")
+        return
+    if os.path.exists(os.path.join(SUPERVISOR_DIR, "sauron.conf")) and shutil.which("supervisorctl"):
+        run(_sudo(["supervisorctl", "restart", "sauron:"]))
+    elif os.path.exists(os.path.join(SYSTEMD_DIR, "sauron-crawler.service")):
+        run(_sudo(["systemctl", "restart"] + [f"sauron-{name}" for name, *_ in _services()]))
+    else:
+        run(["bash", os.path.join(ROOT, "sauron.sh"), "restart"])
+
+
 def step_done(py, using_venv):
     print("\n✅ 세팅 완료. 상시 운영은 sauron.sh 로 실행하세요(자동 실행 안 함):")
     print("    bash sauron.sh            # 크롤러+구독봇 백그라운드 시작(기본, nohup 불필요)")
@@ -331,20 +495,24 @@ def step_done(py, using_venv):
     print("    로그: logs/sauron.log(크롤러) · logs/bot.log(봇) — 자정마다 회전")
     print()
     print("  [7]에서 systemd/supervisor 에 등록했다면 그쪽이 이미 띄우고 있으니 sauron.sh start 로 중복 기동하지 마세요")
-    print("  (상태 확인은 systemctl status sauron-crawler sauron-bot / supervisorctl status sauron: 로).")
+    print("  (상태 확인은 systemctl status 'sauron-*' / supervisorctl status sauron: 로).")
     print("  등록을 건너뛰었다면 나중에 deploy.py 를 다시 돌려 [7]만 진행하면 됩니다.")
 
 
 def main():
     os.chdir(ROOT)
-    print("=== sauron_rb2 세팅 (deploy.py) — 멱등, 여러 번 실행 가능 ===")
+    print("=== sauron 세팅 (deploy.py) — 멱등, 여러 번 실행 가능 ===")
     py, using_venv = step_venv()
     step_pip(py)
+    step_ocr(py, os.path.basename(os.path.dirname(os.path.dirname(py))) if using_venv else ".venv")
     can_guild = step_secrets()
+    step_plugin_secrets(py)     # CSV가 플러그인을 쓰면 그 비밀(없는 것만)
     step_db(py)                 # setup_guild가 depts 테이블을 읽으므로 먼저
     step_setup_guild(py, can_guild)
     step_seed_notices(py)
+    step_mcp()                  # 선택 — 해 두면 [7]에서 sauron:mcp 도 등록
     step_service(py, using_venv)
+    step_restart_running()      # 이미 떠 있으면 새 코드·플러그인을 불러오게
     step_done(py, using_venv)
 
 

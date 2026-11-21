@@ -18,15 +18,18 @@ sys.path.insert(0, ROOT)
 FIX = os.path.join(ROOT, "tests", "fixtures")
 
 import config
-config.OCR_BACKEND = "none"    # (전송은 토큰 없음 → 자동 dry)
 config.UPDATE_LIMIT = 5
+config.DEADLINE_ENABLE = False     # 기존 e2e 는 모의 LLM 서버라 마감 판정 끔 — test_deadline 에서 따로 검증
 
 from db.store import Store
 from crawl.fetcher import Fetcher
 from crawl.diff import detect_new, FetchEmpty, TooManyNew
 from summarize.llm import OpenAICompatSummarizer, SummaryError
-from summarize.ocr import get_ocr
 from notify.notifier import Notifier
+import notify.notifier as _notifier_mod
+# 테스트는 절대 실제 디스코드로 나가면 안 된다. 원래는 "토큰 파일이 없으면 dry"에 기대고 있었는데,
+# 봇이 도는 기기엔 토큰이 있어서 채널 "null"로 진짜 요청을 보내고 실패했다(done에 message_id 테스트).
+_notifier_mod._load_token = lambda: None
 from core.queue import WorkQueue
 from pipeline import Components, crawl_pass, run_once
 
@@ -243,6 +246,449 @@ def test_json_api():
     check("json_api lexical 본문", "미디어본문X" in d2["content"], d2["content"][:60])
 
 
+def test_html_link_template():
+    print("[test] html 링크 조립(fetch_config: link_attr·url_template·link_regex)")
+    f = Fetcher()
+    # 진로취업센터 실물 구조 근사: href="#", 키는 data-params(JSON). 카드마다 썸네일 링크(텍스트 없음)가 섞임.
+    html = ("""<table><tr><td><a class="detailBtn" href="#" data-params='{"sjrSeq":"aa11","paginationInfo.currentPageNo":"1"}'>이마트 신입사원 모집</a></td></tr>"""
+            """<tr><td><a class="detailBtn" href="#" data-params='{"sjrSeq":"bb22","paginationInfo.currentPageNo":"1"}'><img src="t.png"></a>"""
+            """<a class="detailBtn" href="#" data-params='{"sjrSeq":"bb22","paginationInfo.currentPageNo":"1"}'>NH투자증권 대졸 신입</a></td></tr></table>"""
+            """<a class="fn" href="javascript:void(0)" onclick="fnView('9001','A')">onclick 방식 공지 제목</a>""")
+
+    class Resp:
+        content = html.encode()
+    f._get = lambda url, retry_on_error_page=False: Resp()
+
+    base = {"dept_id": "t", "fetch_type": "html", "url_prefix": "",
+            "list_url": "https://job.x/service/careerEmpl/opportunityList.do?currentPageNo={{page}}"}
+
+    # 1) 설정 없음 = 기존 동작(href). href="#"라 전부 목록 주소로 뭉개지는 게 '기존 동작'이다 — 이게 B안이 필요한 이유.
+    items = f.scrape_list({**base, "link_selector": "a.detailBtn"}, 1)
+    check("설정 없으면 href 그대로(기존 동작 불변)", len({i["url"] for i in items}) == 1, str(items))
+
+    # 2) JSON 속성 + 템플릿: 고유 URL, 썸네일 링크(텍스트 없음) 제외
+    cfg = '{"link_attr": "data-params", "url_template": "opportunityInfo.do?sjrSeq={sjrSeq}"}'
+    items = f.scrape_list({**base, "link_selector": "a.detailBtn", "fetch_config": cfg}, 1)
+    urls = [i["url"] for i in items]
+    check("data-params → 2건", len(items) == 2, str(items))
+    check("상대 템플릿 → 절대 URL",
+          urls[0] == "https://job.x/service/careerEmpl/opportunityInfo.do?sjrSeq=aa11", str(urls))
+    check("썸네일 링크(텍스트 없음) 제외", urls.count("https://job.x/service/careerEmpl/opportunityInfo.do?sjrSeq=bb22") == 1, str(urls))
+
+    # 3) 정규식 모드: onclick 에서 이름 있는 그룹 / 번호 그룹
+    rx = {"link_attr": "onclick", "link_regex": r"fnView\('(?P<id>\d+)','(\w)'\)",
+          "url_template": "/view.do?id={id}&t={1}"}
+    items = f.scrape_list({**base, "link_selector": "a.fn", "fetch_config": json.dumps(rx)}, 1)
+    check("onclick 정규식(이름·번호 그룹)", items == [{"title": "onclick 방식 공지 제목",
+                                               "url": "https://job.x/view.do?id=9001&t=A"}], str(items))
+
+    # 4) 템플릿 키가 속성에 없으면 조용히 누락하지 않고 실패
+    bad = '{"link_attr": "data-params", "url_template": "x.do?seq={encSddpbSeq}"}'
+    try:
+        f.scrape_list({**base, "link_selector": "a.detailBtn", "fetch_config": bad}, 1)
+        raised = False
+    except Exception:
+        raised = True
+    check("템플릿 키 불일치 → 예외(전건 누락 방지)", raised, "")
+
+
+def test_generic_options():
+    print("[test] 범용 옵션(title_selector·title_exclude·error_page_retry·json_api detail_path·모르는 fetch_type)")
+    f = Fetcher()
+    # 카드 전체를 감싼 링크: 날짜·뱃지·미리보기가 링크 텍스트에 섞이는 구조(신소재공학과 실물 근사)
+    card = ("""<div class="news-list"><ul><li><a href="/bbs/view?num=574"><div class="date_box"><p>19</p></div>"""
+            """<div class="tit_box"><strong><span class="tag01">공지</span>진로지도교수 상담 신청</strong></div>"""
+            """<p>미리보기 본문이 길게 이어진다</p></a></li></ul></div>""")
+    calls = {"n": 0}
+
+    class Resp:
+        def __init__(self, t): self.content = t.encode(); self.text = t
+        def raise_for_status(self): pass
+
+    def fake_get(url, retry_on_error_page=0):
+        return Resp(card)
+    f._get = fake_get
+    d = {"dept_id": "m", "fetch_type": "html", "url_prefix": "", "list_url": "https://m.x/bbs/list",
+         "link_selector": ".news-list ul li > a"}
+    raw = f.scrape_list(d, 1)[0]["title"]
+    check("옵션 없으면 링크 전체 텍스트(날짜·뱃지·미리보기 섞임)", "19" in raw and "미리보기" in raw, raw)
+    it = f.scrape_list({**d, "fetch_config": json.dumps({"title_selector": ".tit_box strong",
+                                                         "title_exclude": "span"})}, 1)[0]
+    check("title_selector+exclude → 제목만", it["title"] == "진로지도교수 상담 신청", it["title"])
+    check("URL은 그대로 href", it["url"] == "https://m.x/bbs/view?num=574", it["url"])
+
+    # 에러페이지 재시도: 설정 없으면 1회, error_page_retry=3이면 3회까지
+    f2 = Fetcher()
+    seq = ["Uncaught PDOException", "Uncaught PDOException", "<div>정상</div>"]
+
+    class R2:
+        def __init__(self, t): self.text = t; self.content = t.encode()
+        def raise_for_status(self): pass
+    def sess_get(url, **kw):
+        calls["n"] += 1
+        return R2(seq[min(calls["n"] - 1, 2)])
+    f2.session.get = sess_get
+    calls["n"] = 0; f2._get("http://x", retry_on_error_page=0)
+    check("재시도 설정 없음 → 1회 요청", calls["n"] == 1, calls["n"])
+    calls["n"] = 0; r = f2._get("http://x", retry_on_error_page=3)
+    check("error_page_retry=3 → 정상 페이지까지 재시도", calls["n"] == 3 and "정상" in r.text, calls["n"])
+
+    # json_api detail_path: 목록엔 본문이 없고 공지 URL이 상세 JSON을 준다
+    f3 = Fetcher()
+    def get_json(url, headers=None):
+        if "list" in url:
+            return {"data_list": [{"NoticeIndex": 7, "Title": "영화 공지"}]}
+        return {"data_modify": {"Content": "<p>상세 본문</p><img src='/a.png'>"}}
+    f3._get_json = get_json
+    dj = {"dept_id": "j", "fetch_type": "json_api", "list_url": "http://j.x/",
+          "fetch_config": json.dumps({"list_url": "http://j.x/list", "list_path": "data_list",
+                                      "id_key": "NoticeIndex", "title_key": "Title",
+                                      "url_template": "http://j.x/view?NoticeIndex={id}",
+                                      "detail_path": "data_modify.Content", "content_format": "html"})}
+    items = f3.scrape_list(dj, 1)
+    check("json_api 목록", items == [{"title": "영화 공지", "url": "http://j.x/view?NoticeIndex=7"}], str(items))
+    c = f3.fetch_content(dj, items[0]["url"])
+    check("detail_path → 공지 URL의 JSON에서 본문", "상세 본문" in c["content"] and len(c["images"]) == 1, str(c)[:120])
+
+    # 사이트 이름 붙은 옛 fetch_type은 조용히 html로 떨어지지 않고 실패
+    for ft in ("json_ssfilm", "dom_materials"):
+        try:
+            Fetcher().scrape_list({**d, "fetch_type": ft}, 1); raised = False
+        except Exception:
+            raised = True
+        check(f"모르는 fetch_type '{ft}' → 실패", raised, "")
+
+
+def test_crawl_health():
+    print("[test] 수집 실패 알림 — 연속 N회부터·일시장애 침묵·원인변경·리마인드·복구 + 예외 서식")
+    import time as _t
+    from core.crawl_health import CrawlHealth
+    from core.errors import describe
+    store, path = temp_store([DEPT])
+    sent, logs = [], []
+
+    class N:
+        def debug(self, text): sent.append(text)
+
+    def boom_net():
+        try:
+            raise ConnectionError("connection refused")
+        except Exception as e:
+            raise RuntimeError("scrape_list 실패(t p1)") from e
+
+    def boom_key():
+        try:
+            {}["encSddpbSeq"]
+        except Exception as e:
+            raise RuntimeError("scrape_list 실패(t p1)") from e
+
+    def err(fn):
+        try:
+            fn()
+        except Exception as e:
+            return e
+
+    h = CrawlHealth(store, N(), logs.append, remind_sec=3600, alert_after=3)
+    h.failed("t", "테스트학과(t)", err(boom_net))
+    h.ok("t", "테스트학과(t)")                                   # 한 번 실패 후 곧장 복구(일시 장애)
+    check("일시 장애(1회 실패 후 복구)는 조용", sent == [], str(sent))
+    for _ in range(3):
+        h.failed("t", "테스트학과(t)", err(boom_net))
+    check("연속 3회째에 알림 1통", len(sent) == 1 and "3회 연속" in sent[0], str(sent))
+    check("알림에 원인 타입·우리 코드 위치", "원인: ConnectionError" in sent[0] and "@ tests/run_tests.py" in sent[0], sent[0])
+    h.failed("t", "테스트학과(t)", err(boom_key))
+    check("원인 바뀜 → 알림", len(sent) == 2 and "원인 바뀜" in sent[1] and "KeyError" in sent[1], str(sent[-1:]))
+
+    h2 = CrawlHealth(store, N(), logs.append, remind_sec=3600, alert_after=3)      # 크롤러 재시작
+    h2.failed("t", "테스트학과(t)", err(boom_key))
+    check("재시작 후에도 상태 이어짐(재알림 없음)", len(sent) == 2, str(len(sent)))
+    st = h2.failing()["t"]
+    check("누적 횟수 보존", st["count"] == 5 and st["alerted"] is True, str(st))
+
+    st["last_alert"] = _t.time() - 4000                              # 리마인드 간격 경과
+    store.set_meta("crawl_fail:t", json.dumps(st))
+    h2.failed("t", "테스트학과(t)", err(boom_key))
+    check("간격 지나면 '여전히 실패' 1통", len(sent) == 3 and "여전히" in sent[2], str(sent[-1:]))
+
+    h2.ok("t", "테스트학과(t)")
+    check("복구 → 알림 + 상태 삭제", len(sent) == 4 and "복구" in sent[3] and not h2.failing(), str(sent[-1:]))
+    h2.ok("t", "테스트학과(t)")
+    check("정상 반복은 조용", len(sent) == 4, str(len(sent)))
+    for _ in range(3):
+        h2.failed("t", "테스트학과(t)", err(boom_net))
+    check("복구 후 다시 연속 실패 → 새로 알림", len(sent) == 5 and "3회 연속" in sent[4], str(sent[-1:]))
+    check("describe: 감싼 예외 → 원인까지", "원인: KeyError" in describe(err(boom_key)), describe(err(boom_key)))
+    store.close(); os.remove(path)
+
+
+def test_plugins():
+    print("[test] 플러그인 — 수집(목록·상세·본문캐시·형식검사·오류위치) · 비밀")
+    from core import plugin
+    from core.errors import describe
+    tmp = os.path.join(ROOT, "plugins", "zz_test_src.py")
+    open(tmp, "w", encoding="utf-8").write(
+        "from core.plugin import SourcePlugin\n"
+        "class T(SourcePlugin):\n"
+        "    calls = 0\n"
+        "    def list(self, page):\n"
+        "        T.calls += 1\n"
+        "        if self.config.get('bad'): return [{'title': 'x'}]\n"
+        "        if self.config.get('boom'): return {}['encSddpbSeq']\n"
+        "        return [{'title': '본문동봉', 'url': 'http://p/1', 'content': '<p>동봉</p>'},\n"
+        "                {'title': '상세필요', 'url': 'http://p/2'}]\n"
+        "    def detail(self, url):\n"
+        "        return {'content': '<p>상세</p><img src=\"/a.png\">'}\n")
+    try:
+        f = Fetcher()
+        d = {"dept_id": "zt", "fetch_type": "zz_test_src", "list_url": "http://p/", "fetch_config": "{}"}
+        items = f.scrape_list(d, 1); f.scrape_list(d, 2)
+        check("플러그인 목록", [i["url"] for i in items] == ["http://p/1", "http://p/2"], str(items))
+        check("인스턴스 유지(세션 재사용)", len(f._plugins) == 1, str(f._plugins))
+        check("페이지 지원(PAGINATED)", f.paginated(d) is True, "")
+        c1, c2 = f.fetch_content(d, "http://p/1"), f.fetch_content(d, "http://p/2")
+        check("목록 동봉 본문 → 상세 생략", "동봉" in c1["content"], c1["content"])
+        check("상세 + 이미지 추출(코어)", "상세" in c2["content"] and c2["images"][0]["url"] == "http://p/a.png", str(c2))
+        for cfg, want in (('{"bad": 1}', "title·url 필요"), ('{"boom": 1}', "plugins/zz_test_src.py")):
+            try:
+                Fetcher().scrape_list({**d, "fetch_config": cfg}, 1); msg = ""
+            except Exception as e:
+                msg = describe(e)
+            check(f"플러그인 오류 → '{want}'", want in msg, msg)
+    finally:
+        os.remove(tmp)
+    try:
+        Fetcher().scrape_list({**d, "fetch_type": "no_such_plugin"}, 1); raised = ""
+    except Exception as e:
+        raised = str(e)
+    check("없는 플러그인 → 실패", "plugins/no_such_plugin.py" in raised, raised)
+    # 비밀: 선언된 키가 비어 있으면 무엇이 빠졌는지
+    cls = plugin.load_class("ssupath", "source")
+    old = plugin.SECRETS_DIR
+    plugin.SECRETS_DIR = tempfile.mkdtemp()
+    try:
+        check("비밀 파일 없음 → 키 목록", plugin.missing_secrets("ssupath", cls) == ["userid", "pwd"], "")
+        with open(plugin.secrets_path("ssupath"), "w") as fp:
+            json.dump({"userid": "2026", "pwd": ""}, fp)
+        check("빈 값도 빠진 것으로", plugin.missing_secrets("ssupath", cls) == ["pwd"], "")
+        try:
+            plugin.create("ssupath", "source"); se = ""
+        except plugin.PluginError as e:
+            se = str(e)
+        check("생성 시 친절한 오류", "secrets/plugin_ssupath.json" in se and "pwd" in se, se)
+    finally:
+        plugin.SECRETS_DIR = old
+
+
+def test_ssupath_login():
+    print("[test] 슈패스 플러그인 — 가짜 서버로 로그인·목록·재시도 차단")
+    import plugins.ssupath as sp
+    from core import plugin
+    sp.DELAY = 0
+    P = "https://path.ssu.ac.kr"
+    LIST_HTML = ("""<ul>"""
+        """<li><div class="cont_box"><ul class="major_type"><li>기계공학부</li></ul>"""
+        """<a class="btn01 col08 detailBtn" data-params='{"encSddpbSeq":"k1"}'>모집중</a>"""
+        """<a class="tit ellipsis detailBtn" data-params='{"encSddpbSeq":"k1"}'>피지컬AI 인턴십</a></div></li>"""
+        """<li><div class="cont_box"><ul class="major_type"><li>진로취업팀</li></ul>"""
+        """<a class="tit ellipsis detailBtn" data-params='{"encSddpbSeq":"k2"}'>핀테크 견학</a></div></li></ul>""")
+
+    class Resp:
+        def __init__(self, url, text=""): self.url, self.text = url, text
+        def raise_for_status(self): pass
+
+    class FakeSSO:
+        def __init__(self, pw_ok=True):
+            self.pw_ok, self.logged, self.posts, self.params = pw_ok, False, 0, None
+        def get(self, url, params=None, headers=None, timeout=None):
+            if url.startswith(P + "/comm/login/user/loginChk.do"):
+                return Resp("https://smartid.ssu.ac.kr/Symtra_sso/smln.asp?apiReturnUrl=x",
+                            '<form name="LoginInfo" action="smln_pcs.asp"><input name="in_tp_bit" value="0">'
+                            '<input name="rqst_caus_cd" value="03"><input name="userid"><input name="pwd">'
+                            '<input name="chkSave"></form>')
+            if "loginProc.do" in url:
+                if (headers or {}).get("Referer", "").endswith("smln_pcs.asp"):
+                    self.logged = True
+                    return Resp(P + "/ptfol/imng/icmpNsbjtPgm/findIcmpNsbjtPgmList.do", LIST_HTML)
+                return Resp(P + "/error_referer.jsp")
+            if not self.logged:
+                return Resp(P + "/comm/login/user/login.do?rtnUrl=abc123")
+            self.params = params
+            if params and "operYySh" in params:
+                self.years = getattr(self, "years", []) + [params["operYySh"]]
+            return Resp(url, LIST_HTML if "List" in url else '<div id="tilesContent"><table>상세</table></div>')
+        def post(self, url, data=None, headers=None, timeout=None):
+            self.posts += 1
+            ok = self.pw_ok and data.get("pwd") == "right"
+            return Resp("https://smartid.ssu.ac.kr/Symtra_sso/smln_pcs.asp",
+                        "<script>parent.location.href = '" + P + "/comm/login/user/loginProc.do?rtnUrl=x&sIdno=1';</script>"
+                        if ok else "<script>alert('비밀번호가 일치하지 않습니다.');history.back();</script>")
+
+    cls = plugin.load_class("ssupath", "source")
+    sso = FakeSSO()
+    p = cls(secrets={"userid": "2026", "pwd": "right"}, config={"exclude_org": ["진로취업팀"]}, session=sso, timeout=5)
+    items = p.list(1)
+    check("로그인 → 목록(상태버튼 아닌 제목, 진로취업팀 제외)",
+          items == [{"title": "피지컬AI 인턴십", "url": P + "/ptfol/imng/icmpNsbjtPgm/findIcmpNsbjtPgmInfo.do?encSddpbSeq=k1"}], str(items))
+    check("필터를 빈 값까지 명시(세션 검색어 새어듦 방지)", sso.params.get("searchValue") == "" and sso.params["sort"] == "0001", str(sso.params))
+    from datetime import datetime as _dt
+    y = _dt.now().year
+    check("작년·올해·내년 모두 조회(학년도 경계)", sorted(sso.years[:3]) == [str(y - 1), str(y), str(y + 1)], str(sso.years))
+    check("상세 #tilesContent", "상세" in p.detail(items[0]["url"])["content"], "")
+    sso.logged = False                                                     # 세션 만료
+    check("세션 만료 → 재로그인 1회로 복구", len(p.list(1)) == 1 and sso.posts == 2, str(sso.posts))
+
+    bad = FakeSSO()
+    q = cls(secrets={"userid": "2026", "pwd": "wrong"}, config={}, session=bad, timeout=5)
+    msgs = []
+    for _ in range(3):
+        try:
+            q.list(1)
+        except PermissionError as e:
+            msgs.append(str(e))
+    check("비밀번호 거부 → 사유 포함", len(msgs) == 3 and "비밀번호가 일치하지 않습니다" in msgs[0], msgs[:1])
+    check("거부 후 재시도 안 함(계정 잠금 방지)", bad.posts == 1, f"POST {bad.posts}회")
+
+
+def test_category_rename():
+    print("[test] 카테고리 — kind별 이름(설정) · 기존 카테고리 이름 바꾸기(과반 기준·멱등)")
+    import asyncio as _a
+    import notify.setup_guild as sg
+
+    class Cat:
+        def __init__(self, i, name): self.id, self.name, self.edits = i, name, 0
+        async def edit(self, name, reason=None):
+            self.name = name; self.edits += 1; return self
+
+    class Ch:
+        def __init__(self, name, cid): self.name, self.category_id = name, cid
+
+    orig = sg.discord.CategoryChannel
+    sg.discord.CategoryChannel = Cat
+    try:
+        old_general, etc = Cat(1, "공통 공지"), Cat(2, "기타")
+        chans = [old_general, etc, Ch("학사공지", 1), Ch("장학공지", 1), Ch("창업", 2), Ch("슈패스-비교과", 1)]
+        depts = [{"dept_id": "a", "name_ko": "학사공지", "kind": "general"},
+                 {"dept_id": "b", "name_ko": "장학공지", "kind": "general"},
+                 {"dept_id": "c", "name_ko": "창업", "kind": "etc"},
+                 {"dept_id": "d", "name_ko": "슈패스 비교과", "kind": "etc"}]   # etc인데 아직 옛 카테고리에 있음
+        find = lambda n: next((c for c in chans if isinstance(c, Ch) and c.name == sg._norm_ch(n)), None)
+        check("kind → 카테고리 이름(설정)", [sg._category_name(d) for d in depts] ==
+              [config.GENERAL_CATEGORY_NAME] * 2 + [config.ETC_CATEGORY_NAME] * 2, "")
+        sg.DRY = False
+        cache = {}
+        _a.run(sg._rename_categories(depts, chans, find, cache))
+        check("general 과반 카테고리의 이름만 바꿈(새로 만들지 않음)",
+              old_general.name == config.GENERAL_CATEGORY_NAME and old_general.edits == 1 and etc.name == "기타", old_general.name)
+        check("바로 뒤 생성 단계가 재사용하도록 캐시", cache.get(config.GENERAL_CATEGORY_NAME) is old_general, str(cache))
+        _a.run(sg._rename_categories(depts, chans, find, {}))
+        check("두 번째 실행은 아무것도 안 함(멱등)", old_general.edits == 1, str(old_general.edits))
+    finally:
+        sg.discord.CategoryChannel = orig
+        sg.DRY = "--dry" in sys.argv[1:]
+
+
+def test_llm_timeout_vs_disconnect():
+    print("[test] LLM — 읽기 시간초과(첫 토큰 대기)와 연결 끊김을 구분")
+    import socket
+    from summarize.llm import OpenAICompatSummarizer, ConnectionErrorLLM
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+            self.wfile.flush()
+            if self.server.mode == "slow":
+                import time as _t; _t.sleep(3)                       # 첫 토큰 전 침묵 > read timeout
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"x"}}]}\n\n')
+            else:
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"abc"}}]}\n\n'); self.wfile.flush()
+                self.connection.shutdown(socket.SHUT_RDWR)             # 생성 도중 끊음
+        def log_message(self, *a): pass
+
+    for mode, want in (("slow", "시간초과: 첫 토큰"), ("drop", "")):
+        srv = HTTPServer(("127.0.0.1", 0), H); srv.mode = mode
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        s = OpenAICompatSummarizer(base_url=f"http://127.0.0.1:{srv.server_port}/v1", model="m", timeout=1)
+        try:
+            s._call_stream(f"http://127.0.0.1:{srv.server_port}/v1/chat/completions", {"stream": True}); msg = "(예외 없음)"
+        except ConnectionErrorLLM as e:
+            msg = str(e)
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+        srv.shutdown()
+        if mode == "slow":
+            check("첫 토큰 대기 초과 → '시간초과'", want in msg, msg)
+        else:
+            check("생성 도중 끊김 → 시간초과로 오분류하지 않음", "시간초과" not in msg, msg)
+
+
+def test_image_and_stream_errors():
+    print("[test] 이미지 아님 제외 · 플러그인 세션으로 이미지 받기 · 스트림 속 서버 오류")
+    import io
+    from summarize.vision import to_data_url
+    from summarize.llm import OpenAICompatSummarizer, ServerError
+    from PIL import Image
+
+    class R:
+        def __init__(self, body, ctype): self.content, self.headers = body, {"Content-Type": ctype}
+        def raise_for_status(self): pass
+    class Sess:
+        def __init__(self, body, ctype): self.body, self.ctype, self.calls = body, ctype, 0
+        def get(self, url, **kw): self.calls += 1; return R(self.body, self.ctype)
+    html = Sess(b"<!DOCTYPE HTML><html>login</html>" * 50, "text/html;charset=utf-8")
+    check("HTML(로그인 페이지)은 이미지로 보내지 않음", to_data_url("http://x/download.do", session=html) is None, "")
+    buf = io.BytesIO(); Image.new("RGB", (400, 300), "white").save(buf, "PNG")
+    png = Sess(buf.getvalue(), "application/octet-stream")
+    du = to_data_url("http://x/download.do", session=png)
+    check("주어진 세션으로 받음 + 진짜 이미지는 통과", png.calls == 1 and (du or "").startswith("data:image/jpeg"), (du or "")[:30])
+
+    f = Fetcher()
+    check("내장 방식 학과는 세션 없음(로그인 없이)", f.session_for({"dept_id": "h", "fetch_type": "html"}) is None, "")
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+            self.wfile.write(b'data: {"error":{"message":"Failed to decode image. Reason: unknown image type"}}\n\ndata: [DONE]\n\n')
+        def log_message(self, *a): pass
+    srv = HTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
+    sm = OpenAICompatSummarizer(base_url=f"http://127.0.0.1:{srv.server_port}/v1", model="m")
+    try:
+        sm._call_stream(f"http://127.0.0.1:{srv.server_port}/v1/chat/completions", {"stream": True}); msg = ""
+    except ServerError as e:
+        msg = str(e)
+    srv.shutdown()
+    check("스트림 속 서버 오류를 사유로(빈응답으로 뭉개지 않음)", "Failed to decode image" in msg, msg)
+
+
+def test_debug_message_shape():
+    print("[test] 감시채널 메시지 — 첨부 없이 임베드만 · 첫 줄이 제목(폰 푸시에 내용이 보이게)")
+    import notify.notifier as nt
+    seen = {}
+
+    class Fake:
+        @staticmethod
+        def post(url, headers=None, data=None, timeout=None, **kw):
+            seen["url"], seen["kw"] = url, kw
+            seen["payload"] = json.loads(data) if data else None
+            return type("R", (), {"status_code": 200, "json": lambda self: {"id": "1"}})()
+    real = nt.requests
+    nt.requests = Fake
+    try:
+        n = Notifier(dst="null", debug_channel_id="1")
+        n.token, n.dry = "fake", False
+        n.debug("**크롤 실패** · 글로벌미디어학부(media) · 3회 연속\nscrape_list 실패(media p1)\n원인: ConnectionError")
+        p = seen["payload"]
+        check("첨부 없음(푸시가 '이미지를 보냈습니다'로 덮이지 않게)", "files" not in seen["kw"] and not seen["kw"], str(seen["kw"]))
+        check("임베드만(본문 content 없음)", sorted(p) == ["allowed_mentions", "embeds"], str(sorted(p)))
+        check("첫 줄이 제목으로(굵게 표시 제거)",
+              p["embeds"][0]["title"] == "⚠️ 크롤 실패 · 글로벌미디어학부(media) · 3회 연속", p["embeds"][0]["title"])
+        check("나머지는 설명에", "원인: ConnectionError" in p["embeds"][0]["description"], "")
+        check("멘션 차단 유지", p["allowed_mentions"] == {"parse": []}, str(p["allowed_mentions"]))
+    finally:
+        nt.requests = real
+
+
 def test_diff_seed_new_limit():
     print("[test] 차집합 · 시딩 · UPDATE_LIMIT")
     store, path = temp_store([DEPT])
@@ -310,9 +756,9 @@ def test_run_once_e2e():
     base_items = [{"title": f"기존{i}", "url": f"http://x/e{i}"} for i in range(2)]
     fake = FakeFetcher({"testdept": list(base_items)})
     c = Components(
-        store=store, fetcher=fake, ocr=get_ocr("none"),
+        store=store, fetcher=fake,
         summarizer=OpenAICompatSummarizer(base_url=base, model="test-e2b"),
-        notifier=Notifier(dst="mono"), queue=WorkQueue(max_concurrency=1), clova=None)
+        notifier=Notifier(dst="mono"), queue=WorkQueue(max_concurrency=1))
 
     asyncio.run(run_once(c))  # 1회차: 전량 'seeded'(무발송)
     seeded = store.recent_notices()
@@ -341,9 +787,9 @@ def test_debug_resummarize():
     items = [{"title": f"공지{i}", "url": f"http://x/d{i}"} for i in range(3)]
     fake = FakeFetcher({"testdept": list(items)})
     c = Components(
-        store=store, fetcher=fake, ocr=get_ocr("none"),
+        store=store, fetcher=fake,
         summarizer=OpenAICompatSummarizer(base_url=base, model="test-e2b"),
-        notifier=Notifier(), queue=WorkQueue(max_concurrency=1), clova=None)
+        notifier=Notifier(), queue=WorkQueue(max_concurrency=1))
     asyncio.run(run_once(c))                       # 시딩(통합테이블: 전량 'seeded' 행)
     seeded = store.recent_notices()
     check("시딩 후 seeded 3", len(seeded) == 3 and all(r["status"] == "seeded" for r in seeded),
@@ -489,12 +935,303 @@ def test_subscribe_logic():
     store.close(); os.remove(path)
 
 
+def test_send_after_summary():
+    """발송 시점: 요약 뒤 1회 발송(기본) / 2단 발송 / 발송 실패 시 재시도(요약 재사용)."""
+    print("[test] 발송 시점(SEND_AFTER_SUMMARY)")
+    from notify.notifier import SUMMARY_FAIL_NOTE
+    from summarize.worker import drain
+
+    class RecNotifier(Notifier):
+        """실제 전송 대신 기록만. dry 모드의 가짜 id 대신 호출 내역을 검사한다."""
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.token = "T"                      # debug() 경로도 타게(실제 전송은 아래에서 가로챔)
+            self.posts, self.patches, self.debugs = [], [], []
+            self.fail_post = False
+
+        def _post(self, channel_id, embed):
+            self.posts.append(embed)
+            if self.fail_post:
+                raise RuntimeError("디스코드 전송 실패 500 (ch=MONO): 테스트")
+            return {"id": f"m{len(self.posts)}"}
+
+        def _patch(self, channel_id, message_id, embed):
+            self.patches.append((message_id, embed))
+            return {"id": message_id}
+
+        def _post_debug(self, channel_id, embed):
+            self.debugs.append(embed)
+            return {"id": "d"}
+
+    def fresh(llm_mode="ok", after_summary=True):
+        """시딩까지 끝낸 Components + 신규 1건을 들고 있는 fetcher."""
+        config.SEND_AFTER_SUMMARY = after_summary
+        srv, base = start_llm(llm_mode)
+        store, path = temp_store([DEPT])
+        fake = FakeFetcher({"testdept": [{"title": "기존", "url": "http://x/old"}]})
+        c = Components(store=store, fetcher=fake,
+                       summarizer=OpenAICompatSummarizer(base_url=base, model="test-e2b"),
+                       notifier=RecNotifier(dst="mono", mono_channel_id="MONO", debug_channel_id="DBG"),
+                       queue=WorkQueue(max_concurrency=1))
+        asyncio.run(run_once(c))                               # 1회차 = 시딩(무발송)
+        fake.list_map["testdept"] = [{"title": "새 공지", "url": "http://x/new"}] + fake.list_map["testdept"]
+        c.queue = WorkQueue(max_concurrency=1)
+        return c, srv, path
+
+    def row(c):
+        return [r for r in c.store.recent_notices() if r["url"] == "http://x/new"][0]
+
+    old_flag = config.SEND_AFTER_SUMMARY
+    try:
+        # ① 기본: 요약이 끝난 뒤 한 번만 POST. 그 임베드에 요약이 들어 있어야 한다(폰 푸시에 보이는 내용).
+        c, srv, path = fresh()
+        asyncio.run(run_once(c))
+        n = c.notifier
+        r = row(c)
+        check("요약 뒤 1회 발송(POST 1·PATCH 0)", len(n.posts) == 1 and len(n.patches) == 0,
+              f"posts={len(n.posts)} patches={len(n.patches)}")
+        check("발송 임베드에 요약 포함", "테스트 요약입니다" in n.posts[0]["description"],
+              n.posts[0]["description"][:60] if n.posts else "")
+        check("done + message_id 기록", r["status"] == "done" and r["discord_message_id"] == "m1",
+              f"{r['status']}/{r['discord_message_id']}")
+        srv.shutdown(); c.store.close(); os.remove(path)
+
+        # ② 요약이 실패해도 공지는 간다(실패 문구 포함) + 감시채널 디버그.
+        c, srv, path = fresh(llm_mode="refuse")
+        asyncio.run(run_once(c))
+        n, r = c.notifier, row(c)
+        check("요약 실패도 발송됨", len(n.posts) == 1, f"posts={len(n.posts)}")
+        check("실패 문구 포함", SUMMARY_FAIL_NOTE in n.posts[0]["description"] if n.posts else False, "")
+        check("실패 → 감시채널 디버그", any("요약 실패" in (e.get("title") or "") for e in n.debugs),
+              str([e.get("title") for e in n.debugs]))
+        check("summary_failed + message_id", r["status"] == "summary_failed" and r["discord_message_id"],
+              f"{r['status']}/{r['discord_message_id']}")
+        srv.shutdown(); c.store.close(); os.remove(path)
+
+        # ③ 발송이 실패하면 '미완'으로 남고(누락 0), 재적재 때 LLM 없이 발송만 다시 시도한다.
+        c, srv, path = fresh()
+        c.notifier.fail_post = True
+        asyncio.run(run_once(c))
+        n, r = c.notifier, row(c)
+        check("발송 실패 → 미완 유지", r["status"] == "summarizing" and not r["discord_message_id"],
+              f"{r['status']}/{r['discord_message_id']}")
+        check("발송 실패에도 요약은 저장", bool(r["summary"]), "")
+        check("발송 실패 → 감시채널 디버그", any("발송 실패" in (e.get("title") or "") for e in n.debugs),
+              str([e.get("title") for e in n.debugs]))
+        srv.shutdown()                                   # LLM 서버를 끈다 → 재요약하면 실패할 환경
+        n.fail_post = False
+        check("재적재 1건", c.queue.requeue_pending(c.store) == 1, "")
+        asyncio.run(drain(c))
+        r = row(c)
+        check("재시도로 발송 완료(LLM 미사용)", r["status"] == "done" and r["discord_message_id"] == "m2",
+              f"{r['status']}/{r['discord_message_id']}")
+        check("요약문 유지", "테스트 요약입니다" in (r["summary"] or ""), r["summary"] or "")
+        c.store.close(); os.remove(path)
+
+        # ④ 끄면 기존 2단 발송(제목+링크 먼저 → 요약 도착 후 수정).
+        c, srv, path = fresh(after_summary=False)
+        asyncio.run(run_once(c))
+        n, r = c.notifier, row(c)
+        check("2단: POST 1·PATCH 1", len(n.posts) == 1 and len(n.patches) == 1,
+              f"posts={len(n.posts)} patches={len(n.patches)}")
+        check("2단: 1단 임베드엔 요약 없음", "테스트 요약입니다" not in n.posts[0]["description"], "")
+        check("2단: 수정 임베드에 요약", "테스트 요약입니다" in n.patches[0][1]["description"], "")
+        check("2단: done + message_id", r["status"] == "done" and r["discord_message_id"] == "m1",
+              f"{r['status']}/{r['discord_message_id']}")
+        srv.shutdown(); c.store.close(); os.remove(path)
+    finally:
+        config.SEND_AFTER_SUMMARY = old_flag
+
+
+def test_channel_role_rename():
+    """학과 이름·소속이 바뀌었을 때(학교가 정한다) 채널·역할을 새로 만들지 않고 이름만 바꾸는지."""
+    print("[test] 학과 이름 변경 — DB의 ID로 찾아 채널·역할 이름 소급(멱등)")
+    import asyncio as _a
+    import notify.setup_guild as sg
+
+    class Obj:
+        def __init__(self, i, name): self.id, self.name, self.edits = i, name, 0
+        async def edit(self, name, reason=None):
+            self.name = name; self.edits += 1; return self
+
+    old_sg_dry = sg.DRY
+    sg.DRY = False
+    try:
+        # ① ID로 찾은 역할의 이름이 바뀜 → rename(새로 만들지 않음)
+        role = Obj(11, "미디어경영학과")
+        got = _a.run(sg._claim(role, None, "디지털미디어학과", "역할"))
+        check("역할 이름 소급 변경", got is role and role.name == "디지털미디어학과" and role.edits == 1,
+              f"{role.name}/{role.edits}")
+        got = _a.run(sg._claim(role, None, "디지털미디어학과", "역할"))
+        check("두 번째 실행은 no-op(멱등)", role.edits == 1, str(role.edits))
+
+        # ② 채널은 디스코드 정규화 이름과 비교한다(공백→하이픈·소문자)
+        ch = Obj(21, "it대학-정보보호학과")
+        got = _a.run(sg._claim(ch, None, "IT대학 정보보호학과", "채널", sg._norm_ch))
+        check("정규화 이름이 같으면 안 바꿈", ch.edits == 0, str(ch.edits))
+        got = _a.run(sg._claim(ch, None, "AI대학 정보보호학과", "채널", sg._norm_ch))
+        check("소속 변경 → 채널 이름 소급", ch.name == "AI대학 정보보호학과" and ch.edits == 1,
+              f"{ch.name}/{ch.edits}")
+
+        # ③ 같은 이름의 다른 채널이 이미 있으면 rename하지 않고 DB의 것을 쓴다(동명 둘 방지)
+        mine, dup = Obj(31, "it대학-정보보호학과"), Obj(32, "ai대학-정보보호학과")
+        got = _a.run(sg._claim(mine, dup, "AI대학 정보보호학과", "채널", sg._norm_ch))
+        check("동명 충돌 시 경고만·DB것 유지", got is mine and mine.edits == 0, f"{got.id}/{mine.edits}")
+
+        # ④ ID가 없거나 길드에서 사라졌으면 이름으로 찾은 것을 쓴다(기존 동작 보존)
+        byname = Obj(41, "ai대학-ai소프트웨어학부")
+        check("ID 없음 → 이름으로 찾은 것", _a.run(sg._claim(None, byname, "AI대학 AI소프트웨어학부", "채널", sg._norm_ch)) is byname, "")
+        check("둘 다 없으면 None", _a.run(sg._claim(None, None, "새 학과", "채널", sg._norm_ch)) is None, "")
+
+        # ⑤ _by_id: 빈 값·쓰레기 값·없는 ID는 None(크래시 금지)
+        pool = {31: mine}
+        check("_by_id 정상", sg._by_id(pool.get, "31") is mine, "")
+        check("_by_id 빈값·오류값", all(sg._by_id(pool.get, v) is None for v in (None, "", "abc", "99")), "")
+    finally:
+        sg.DRY = old_sg_dry
+
+
+def test_ocr_fallback_routing():
+    """OCR 텍스트 프롬프트 첨부 · OCR 판독 실패 시 로컬 생략→클라우드 비전 · 클라우드 없으면 이미지 제외."""
+    print("[test] OCR 텍스트 첨부 / 로컬 생략 폴백")
+    from summarize.llm import _ocr_block, FallbackSummarizer, EmptyContentError
+    from summarize import worker as W
+
+    blk, n = _ocr_block(["", "  행사 일시 | 12월 3일  ", "장소 | 형남공학관"])
+    check("OCR 블록: 빈 장 생략·번호 유지", n == 2 and "[첨부 이미지 2 OCR]" in blk and "[첨부 이미지 1 OCR]" not in blk, blk)
+    old = config.OCR_MAX_CHARS
+    config.OCR_MAX_CHARS = 5
+    blk2, _ = _ocr_block(["가나다라마바사"])
+    config.OCR_MAX_CHARS = old
+    check("OCR 블록: 총 글자 상한", blk2.strip().endswith("가나다라마") and "바" not in blk2, blk2)
+
+    calls = []
+
+    class Fake:
+        def __init__(self, name):
+            self.name, self.model, self.base_url = name, name, "x"
+
+        def ensure_model(self):
+            return self.model
+
+        def summarize(self, title, html, image_urls=None, ocr_texts=None):
+            calls.append((self.name, bool(image_urls), ocr_texts))
+            if self.name == "local" and not html and not ocr_texts and not image_urls:
+                raise EmptyContentError("empty")
+            return f"- {self.name} 요약임", self.name
+
+    fb = FallbackSummarizer(Fake("local"), Fake("cloud"))
+    vision_old = config.LLM_VISION
+    config.LLM_VISION = False
+    try:
+        calls.clear()
+        t, e = fb.summarize("제목", "<p>본문</p>", ["data:x"], ocr_texts=["OCR글자"])
+        check("OCR 성공: 로컬이 OCR 텍스트로(이미지 미첨부)", e == "local" and calls == [("local", False, ["OCR글자"])], calls)
+        calls.clear()
+        t, e = fb.summarize("제목", "<p>본문</p>", ["data:x"], skip_local=True, skip_reason="OCR 판독 실패")
+        check("OCR 판독 실패: 로컬 생략 → 클라우드 비전", e == "cloud:cloud" and calls == [("cloud", True, None)], calls)
+        calls.clear()
+        t, e = fb.summarize("제목", "", ["data:x"], ocr_texts=None)
+        check("본문·OCR 없고 이미지뿐: 클라우드로", e == "cloud:cloud" and calls[-1] == ("cloud", True, None), calls)
+        calls.clear()
+        try:
+            fb.summarize("제목", "", None)
+            ok = False
+        except EmptyContentError:
+            ok = True
+        check("진짜 내용 없음은 그대로 EmptyContent", ok and calls == [("local", False, None)], calls)
+
+        calls.clear()
+        loc = Fake("local")
+        W._call_summarizer(loc, "제목", "<p>본문</p>", ["data:x"], {"ocr_texts": None, "skip_local": True})
+        check("클라우드 없음: 로컬에 이미지 안 보냄·skip_local 무시", calls == [("local", False, None)], calls)
+    finally:
+        config.LLM_VISION = vision_old
+
+
+def test_deadline():
+    print("\n[마감일 — 후보 추출 · 선택 판정 · 디스코드 줄 위치 · DB 마이그레이션 · MCP 필드]")
+    from datetime import date
+    import importlib.util
+    from summarize import deadline as D
+
+    text = ("참가 신청: 2026.11.03.(화) ~ 11.20.(금) 18:00\n예선 발표: 11.27.(금)\n시상식: 12월 11일\n"
+            "신청: 11월 3일 ~ 20일 오후 5시\n문의 02-820-0114, 평점 3.5 이상, 작년 2025.10.01.")
+    c = D.extract_candidates(text, date(2026, 11, 2))
+    got = [D._at(x) for x in c]
+    check("후보: 연월일·월일·'~20일'·시각, 전화·학점·지난 날짜 제외",
+          got == ["2026-11-03", "2026-11-20T17:00", "2026-11-20T18:00", "2026-11-27", "2026-12-11"], got)
+    got = [D._at(x) for x in D.extract_candidates(
+        "모집기간\n2026.11.12 00:00 ~2026.11.30 17:00\n등록일\n2026.11.10", date(2026, 11, 10))]
+    check("등록일 날짜는 빼되, 다음 줄에 '등록일'이 와도 마감은 남김", got == ["2026-11-12T00:00", "2026-11-30T17:00"], got)
+    check("연도 없는 1/5 는 12월 공지에서 다음 해",
+          [D._at(x) for x in D.extract_candidates("개강 1/5", date(2026, 12, 20))] == ["2027-01-05"])
+
+    orig = D.choose
+    try:
+        D.choose = lambda *a, **k: (1, 0.97)
+        r = D.analyze("t", "<p>신청 11.03.(화) ~ 11.20.(금)</p>", None, date(2026, 11, 2))
+        check("고른 선택지 → set + 원문 날짜", r["state"] == "set" and r["at"] == "2026-11-20" and r["conf"] == 0.97, r)
+        D.choose = lambda *a, **k: (1, 0.55)
+        check("확률 낮음 → unknown", D.analyze("t", "11.03.(화) ~ 11.20.(금)", None, date(2026, 11, 2))["state"] == "unknown")
+        D.choose = lambda *a, **k: (None, 0.99)
+        check("'해당 없음' → none", D.analyze("t", "11.20.(금) 결과 발표", None, date(2026, 11, 2))["state"] == "none")
+        def boom(*a, **k):
+            raise ConnectionError("down")
+        D.choose = boom
+        check("호출 실패 → unknown(예외 안 냄)", D.analyze("t", "11.20.(금)", None, date(2026, 11, 2))["state"] == "unknown")
+        calls = []
+        D.choose = lambda *a, **k: calls.append(1) or (0, 1.0)
+        r = D.analyze("t", "날짜 없는 공지", None, date(2026, 11, 2))
+        check("후보 없음 → none, LLM 안 부름", r["state"] == "none" and not calls, (r, calls))
+        D.choose = lambda *a, **k: (0, 0.99)
+        r = D.analyze("t", "본문엔 날짜 없음", "[OCR] 접수 마감 11.20.(금) 17:00", date(2026, 11, 2))
+        check("OCR 텍스트의 날짜도 후보", r["at"] == "2026-11-20T17:00", r)
+    finally:
+        D.choose = orig
+
+    n = Notifier(dst="null")
+    base = {"title": "T", "url": "http://x", "status": "done", "summary": "요약입니다"}
+    e = n._embed(dict(base, deadline_state="set", deadline_at="2026-11-20T18:00"), {})
+    ts = D.to_unix("2026-11-20T18:00")[0]
+    line = f"⏰ <t:{ts}:f> 까지 · <t:{ts}:R> 마감"
+    d = e["description"]
+    check("마감 줄: 요약과 AI 면책 문구 사이", line in d and d.index("요약입니다") < d.index(line) < d.index("AI는 실수"), d)
+    check("날짜만이면 :D 형식", ":D>" in D.discord_line({"deadline_state": "set", "deadline_at": "2026-11-20"}))
+    for st in ("none", "unknown", None):
+        e2 = n._embed(dict(base, deadline_state=st, deadline_at=None), {})
+        check(f"마감 {st} → 줄 없음", "⏰" not in e2["description"])
+
+    # 옛 DB(마감 열 없음)를 Store 가 열면 열이 붙는다
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE notices (id INTEGER PRIMARY KEY, dept_id TEXT, title TEXT, url TEXT, summary TEXT, "
+                "status TEXT, first_seen_at TEXT, created_at TEXT, updated_at TEXT)")
+    con.execute("INSERT INTO notices VALUES (1,'d','t','u','s','done','2026-11-01 00:00:00','2026-11-01 00:00:00',NULL)")
+    con.commit()
+    spec = importlib.util.spec_from_file_location("mcp_queries_t", os.path.join(ROOT, "mcp", "queries.py"))
+    Q = importlib.util.module_from_spec(spec); spec.loader.exec_module(Q)
+    con.row_factory = sqlite3.Row
+    check("MCP: 마감 열 없는 DB에서도 동작", "deadline" not in Q._cols(con), Q._cols(con))
+    st = Store(path)
+    st.set_deadline(1, "set", "2026-11-20", 0.95)
+    row = st.get_notice(1)
+    check("마이그레이션 + set_deadline", row["deadline_state"] == "set" and row["deadline_at"] == "2026-11-20", row)
+    st.close()
+    Q._HAS_DEADLINE = False
+    con = sqlite3.connect(path); con.row_factory = sqlite3.Row
+    r = con.execute(f"SELECT {Q._cols(con)} FROM notices n").fetchone()
+    out = Q._notice(r, "brief")
+    check("MCP: deadline 필드(set만)", out.get("deadline") == "2026-11-20", out)
+    con.close(); os.remove(path)
+
+
 if __name__ == "__main__":
-    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api,
-              test_diff_seed_new_limit, test_llm_client,
-              test_run_once_e2e, test_debug_resummarize, test_model_autodetect,
+    for t in (test_fetcher_parse, test_image_multi_extract, test_apiparse, test_json_api, test_html_link_template, test_generic_options, test_plugins, test_ssupath_login, test_category_rename, test_channel_role_rename,
+              test_diff_seed_new_limit, test_crawl_health, test_debug_message_shape, test_llm_client, test_llm_timeout_vs_disconnect, test_image_and_stream_errors,
+              test_run_once_e2e, test_send_after_summary, test_debug_resummarize, test_model_autodetect,
               test_refusal_precision, test_repetition_strip, test_language_issue,
-              test_subscribe_logic, test_dst_routing):
+              test_subscribe_logic, test_dst_routing, test_ocr_fallback_routing, test_deadline):
         try:
             t()
         except Exception as e:

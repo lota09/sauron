@@ -6,14 +6,24 @@ crawl/fetcher.py — 크롤러 (ICT tools/fetch_tool.py 이식·정리)
   scrape_list(dept, page) -> [{'title','url'}]
   fetch_content(dept, url) -> {'content','images':[{'url','filename'}]}
 
-fetch_type:
-  html          : 제네릭 CSS (link_selector / content_selector)
-  json_ssfilm   : 영화예술 JSON API
-  json_mediamba : 미디어경영 JSON API
-  onclick_media : 글로벌미디어 onclick viewData()
-  post_lawyer   : 법무 POST 요청
-  dom_materials : 신소재 특수 DOM
-infocom: 학교서버 버그(Uncaught PDOException) 에러페이지 감지 시 F5처럼 재시도.
+fetch_type (사이트 이름이 아니라 '수집 방식'만 존재한다 — 사이트 차이는 전부 depts 행의 설정):
+  html      : link_selector / content_selector 로 목록·본문을 고른다.
+              fetch_config(선택)로 범용 옵션을 켠다. 없으면 기본 동작.
+                링크 조립   {"link_attr": "data-params", "url_template": "view.do?seq={seq}"}  ← 속성값이 JSON
+                            {"link_attr": "onclick", "link_regex": "fnView\\('(?P<id>\\d+)'\\)",
+                             "url_template": "view.do?id={id}"}                              ← 속성값에서 정규식 추출
+                            (href에서 쿼리를 떼는 데도 쓴다: link_attr=href, link_regex="^(?P<p>[^?#]+)")
+                제목 영역   {"title_selector": ".tit_box strong", "title_exclude": "span"}
+                            링크가 카드 전체를 감쌀 때, 링크 안에서 제목만 고르고 뱃지 등을 뺀다.
+                에러페이지  {"error_page_retry": 3}
+                            서버가 200과 함께 PHP 에러페이지를 줄 때 새로고침처럼 재시도(ERROR_SIGNATURES).
+  json_api  : 화면을 JS로 그리는 사이트의 JSON API. fetch_config 필수:
+              list_url({page})·list_path·id_key·title_key·url_template·content_key·content_format
+              ·(선택)page_base·headers·detail_path
+              detail_path가 있으면 본문을 목록이 아니라 '공지 URL이 돌려주는 JSON'의 그 경로에서 읽는다.
+  그 외     : 플러그인 — plugins/<fetch_type>.py 의 SourcePlugin(로그인이 필요한 사이트 등).
+              fetch_config는 플러그인의 self.config 로 전달된다. 틀은 core/plugin.py.
+플러그인도 없는 fetch_type은 조용히 html로 떨어지지 않고 실패한다(설정 오류를 숨기지 않음).
 """
 import hashlib
 import json
@@ -27,6 +37,7 @@ import urllib3
 from bs4 import BeautifulSoup, Comment
 
 import config
+from core import plugin
 from crawl import apiparse
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -39,21 +50,63 @@ class FetchError(Exception):
     pass
 
 
+BUILTIN_TYPES = ("html", "json_api")
+
+
+def _new_session():
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": config.USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3",
+        "Connection": "keep-alive",
+    })
+    return s
+
+
 class Fetcher:
     def __init__(self, session: requests.Session = None):
-        self.session = session or requests.Session()
-        self.session.headers.update({
-            "User-Agent": config.USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3",
-            "Connection": "keep-alive",
-        })
+        self.session = session or _new_session()
         self.timeout = (config.REQUEST_CONNECT_TIMEOUT, config.REQUEST_TIMEOUT)  # (connect, read): 죽은 호스트 5초 실패
         self._json_cache = {}   # json_api: dept_id → {notice_url: item} (scrape_list이 채움)
+        self._plugins = {}      # dept_id → SourcePlugin 인스턴스(프로세스 동안 유지 → 로그인 세션 재사용)
+        self._plugin_content = {}   # 플러그인이 목록에서 준 본문: url → html(있으면 상세 요청 생략)
 
-    # ── HTTP with infocom retry ────────────────────────
-    def _get(self, url, retry_on_error_page=False):
-        tries = config.INFOCOM_RETRY if retry_on_error_page else 1
+    # ── 플러그인 ────────────────────────────────────────
+    def _plugin(self, dept):
+        """학과의 수집 플러그인. 학과마다 인스턴스 하나, 전용 세션(쿠키가 다른 사이트와 섞이지 않게)."""
+        ftype, did = dept.get("fetch_type"), dept["dept_id"]
+        p = self._plugins.get(did)
+        if p is None or p.name != ftype:
+            cfg = dept.get("fetch_config") or {}
+            cfg = cfg if isinstance(cfg, dict) else json.loads(cfg)
+            p = plugin.create(ftype, "source", config=cfg, session=_new_session(), timeout=self.timeout)
+            self._plugins[did] = p
+        return p
+
+    def session_for(self, dept):
+        """이 학과의 파일(이미지 등)을 받을 세션. 플러그인 학과는 그 플러그인의 로그인 세션,
+        그 외는 None(=로그인 없이). 로그인이 필요한 사이트의 첨부는 로그인 없이 받으면 HTML이 온다."""
+        if dept.get("fetch_type", "html") in BUILTIN_TYPES:
+            return None
+        try:
+            return self._plugin(dept).session
+        except Exception:
+            return None
+
+    def paginated(self, dept):
+        """list_url의 {{page}} 처럼 2·3페이지를 긁을 수 있는가(시딩·재크롤 페이지 수 결정)."""
+        ftype = dept.get("fetch_type", "html")
+        if ftype == "html":
+            return "{{page}}" in (dept.get("list_url") or "")
+        if ftype == "json_api":
+            return False
+        return bool(plugin.load_class(ftype, "source").PAGINATED)
+
+    # ── HTTP (+ 에러페이지 재시도) ─────────────────────
+    def _get(self, url, retry_on_error_page=0):
+        """retry_on_error_page: 에러페이지(ERROR_SIGNATURES)일 때 재시도할 횟수. 0이면 1회만."""
+        tries = max(1, int(retry_on_error_page or 0))
         last = None
         for i in range(tries):
             resp = self.session.get(url, timeout=self.timeout, verify=False)
@@ -67,8 +120,15 @@ class Fetcher:
         return last  # 마지막(에러페이지일 수 있음) 반환
 
     @staticmethod
-    def _needs_retry(dept) -> bool:
-        return "infocom.ssu.ac.kr" in (dept.get("list_url") or "")
+    def _html_cfg(dept):
+        """html 학과의 선택 옵션(fetch_config). 없으면 {} = 기본 동작."""
+        raw = dept.get("fetch_config")
+        if not raw:
+            return {}
+        return raw if isinstance(raw, dict) else json.loads(raw)
+
+    def _retries(self, dept):
+        return int(self._html_cfg(dept).get("error_page_retry") or 0)
 
     # ── 목록 스크랩 ────────────────────────────────────
     def scrape_list(self, dept, page: int = 1):
@@ -76,32 +136,76 @@ class Fetcher:
         ftype = dept.get("fetch_type", "html")
         prefix = dept.get("url_prefix") or ""
         try:
-            if ftype == "json_ssfilm":
-                return self._list_ssfilm(url)
-            if ftype == "json_mediamba":
-                return self._list_mediamba(url)
-            if ftype == "onclick_media":
-                return self._list_media(url, dept.get("link_selector"))
-            if ftype == "post_lawyer":
-                return self._list_lawyer(url)
-            if ftype == "dom_materials":
-                return self._list_materials(url)
             if ftype == "json_api":
                 return self._list_json_api(dept)
-            return self._list_generic(url, dept.get("link_selector"), prefix,
-                                      retry=self._needs_retry(dept))
+            if ftype == "html":
+                return self._list_generic(url, dept.get("link_selector"), prefix,
+                                          retry=self._retries(dept), cfg=self._html_cfg(dept))
+            return self._list_plugin(dept, page)
         except Exception as e:
             raise FetchError(f"scrape_list 실패({dept['dept_id']} p{page}): {e}")
 
-    def _list_generic(self, url, link_selector, prefix, retry=False):
+    def _list_plugin(self, dept, page):
+        """플러그인 목록 → 코어 형식 확인. 형식이 틀리면 조용히 넘기지 않고 실패."""
+        out = []
+        for i, it in enumerate(self._plugin(dept).list(page) or []):
+            if not (isinstance(it, dict) and it.get("title") and it.get("url")):
+                raise FetchError(f"plugins/{dept['fetch_type']}.py list() {i}번째 항목에 title·url 필요: {str(it)[:120]}")
+            if it.get("content"):
+                self._plugin_content[it["url"]] = it["content"]
+            out.append({"title": str(it["title"]).strip(), "url": it["url"]})
+        return out
+
+    @staticmethod
+    def _build_link(el, cfg, base_url):
+        """요소의 속성값에서 키를 뽑아 url_template을 채운다. 키가 없는 요소(썸네일 링크 등)는 None.
+        link_regex가 있으면 정규식(이름 있는 그룹 → {name}, 번호 그룹 → {0}{1}…), 없으면 JSON으로 해석."""
+        raw = el.get(cfg.get("link_attr", "href"))
+        if not raw:
+            return None
+        if cfg.get("link_regex"):
+            m = re.search(cfg["link_regex"], raw)
+            if not m:
+                return None
+            args, kwargs = m.groups(), m.groupdict()
+        else:
+            kwargs = json.loads(raw)
+            args = ()
+        try:
+            return urljoin(base_url, cfg["url_template"].format(*args, **kwargs))
+        except (KeyError, IndexError) as e:
+            # 템플릿 키가 속성에 없음 = 설정 오류(사이트 구조 변경 포함). 조용히 넘기면 전건 누락이라 터뜨린다.
+            raise FetchError(f"url_template 키 불일치: {e} (속성값={raw[:120]})")
+
+    @staticmethod
+    def _title_of(el, cfg):
+        """제목 텍스트. title_selector가 있으면 링크 안의 그 영역만, title_exclude는 읽기 전에 뺀다(뱃지 등)."""
+        sel = cfg.get("title_selector")
+        te = el.select_one(sel) if sel else el
+        if te is None:
+            return ""
+        if cfg.get("title_exclude"):
+            te = BeautifulSoup(str(te), "html.parser")      # 원본 트리를 건드리지 않게 복사본에서 제거
+            for x in te.select(cfg["title_exclude"]):
+                x.decompose()
+        return te.get_text(strip=True)
+
+    def _list_generic(self, url, link_selector, prefix, retry=0, cfg=None):
         if not (link_selector and link_selector.strip()):
             return []  # 셀렉터 미정 학과
+        cfg = cfg or {}
+        link_cfg = cfg if cfg.get("url_template") else None
         resp = self._get(url, retry_on_error_page=retry)
         soup = BeautifulSoup(resp.content, "html.parser")
         out = []
         for a in soup.select(link_selector):
+            text = self._title_of(a, cfg)
+            if link_cfg:
+                full = self._build_link(a, link_cfg, url)
+                if full and text and len(text) > 3:
+                    out.append({"title": text, "url": full})
+                continue
             href = a.get("href")
-            text = a.get_text(strip=True)
             if href and text and len(text) > 3:
                 full = urljoin(url, href)
                 full = full.split("PHPSESSID=")[0]  # 세션id 제거
@@ -150,6 +254,12 @@ class Fetcher:
 
     def _content_json_api(self, dept, url):
         cfg = self._fetch_cfg(dept)
+        if cfg.get("detail_path"):          # 목록엔 본문이 없고, 공지 URL 자체가 상세 JSON을 준다
+            data = self._get_json(url, cfg.get("headers"))
+            raw = apiparse.dig(data, cfg["detail_path"]) or ""
+            html_content = apiparse.to_html(cfg.get("content_format", "html"), raw)
+            images = self._extract_images(html_content, url) if html_content else []
+            return {"content": self._clean_html(html_content), "images": images}
         it = self._json_cache.get(dept["dept_id"], {}).get(url)
         if it is None:                       # 캐시 미스(예: query 재처리·깊은 페이지) → 페이지를 훑어 재조회
             base = cfg.get("page_base", 1)
@@ -160,74 +270,10 @@ class Fetcher:
                     break
         if it is None:
             return {"content": "", "images": []}
-        raw = it.get(cfg["content_key"]) or ""
+        raw = it.get(cfg.get("content_key") or "") or ""
         html_content = apiparse.to_html(cfg.get("content_format", "html"), raw)
         images = self._extract_images(html_content, url) if html_content else []
         return {"content": self._clean_html(html_content), "images": images}
-
-    def _list_ssfilm(self, url):
-        data = self._get(url).json()
-        out = []
-        for item in data.get("data_list", []):
-            t = (item.get("Title") or "").strip()
-            idx = item.get("NoticeIndex", "")
-            if t and idx:
-                out.append({"title": t, "url": f"http://ssfilm.ssu.ac.kr/notice/notice_view?NoticeIndex={idx}"})
-        return out
-
-    def _list_mediamba(self, url):
-        data = self._get(url).json()
-        out = []
-        if data.get("success"):
-            for item in data.get("data", {}).get("boards", [])[:10]:
-                t = (item.get("title") or "").strip()
-                bid = item.get("id", "")
-                if t and bid:
-                    out.append({"title": t, "url": f"https://api.mediamba.ssu.ac.kr/v1/board/{bid}"})
-        return out
-
-    def _list_media(self, url, link_selector):
-        resp = self._get(url)
-        soup = BeautifulSoup(resp.content, "html.parser")
-        out = []
-        for link in soup.select(link_selector or ""):
-            oc = link.get("onclick") or ""
-            m = re.search(r"viewData\('(\d+)'\)", oc)
-            text = link.get_text(strip=True)
-            if m and text and len(text) > 3:
-                out.append({"title": text,
-                            "url": f"http://media.ssu.ac.kr/sub.php?code=XxH00AXY&mode=view&board_num={m.group(1)}&category=1"})
-        return out
-
-    def _list_lawyer(self, url):
-        resp = self._get(url)
-        soup = BeautifulSoup(resp.content, "html.parser")
-        out = []
-        for item in soup.select("#main > section.contents > div.board-list-style.board-course > div.board-list-body > div"):
-            _id = item.get("id")
-            if not _id:
-                continue
-            te = item.select_one("p.b-title > a")
-            if te:
-                t = te.get_text(strip=True)
-                if t and len(t) > 3:
-                    out.append({"title": t, "url": f"https://lawyer.ssu.ac.kr/web/05/notice_view.do?post={_id}"})
-        return out
-
-    def _list_materials(self, url):
-        resp = self._get(url)
-        soup = BeautifulSoup(resp.content, "html.parser")
-        out = []
-        for item in soup.select(".news-list ul li"):
-            a = item.select_one("a")
-            te = item.select_one(".tit_box strong")
-            if a and a.get("href") and te:
-                for span in te.select("span"):
-                    span.decompose()
-                t = te.get_text(strip=True)
-                if t and len(t) > 3:
-                    out.append({"title": t, "url": urljoin(url, a.get("href"))})
-        return out
 
     # ── 상세 본문 ──────────────────────────────────────
     def fetch_content(self, dept, url):
@@ -238,46 +284,25 @@ class Fetcher:
             except Exception as e:
                 raise FetchError(f"fetch_content json_api 실패({url}): {e}")
         try:
-            if ftype == "json_ssfilm":
-                content = self._content_ssfilm(url)
-            elif ftype == "json_mediamba":
-                content = self._content_mediamba(url)
-            elif ftype == "post_lawyer":
-                content = self._content_lawyer(url, dept.get("content_selector"))
+            if ftype == "html":
+                content = self._content_generic(url, dept.get("content_selector"), retry=self._retries(dept))
             else:
-                content = self._content_generic(url, dept.get("content_selector"),
-                                                 retry=self._needs_retry(dept))
+                content = self._plugin_content.pop(url, None)
+                if content is None:
+                    d = self._plugin(dept).detail(url)
+                    if not (isinstance(d, dict) and "content" in d):
+                        raise FetchError(f"plugins/{ftype}.py detail()은 {{'content': html}}을 돌려줘야 함: {str(d)[:120]}")
+                    content = d["content"] or ""
         except Exception as e:
             raise FetchError(f"fetch_content 실패({url}): {e}")
 
         images = self._extract_images(content, url) if content else []
         return {"content": self._clean_html(content), "images": images}
 
-    def _content_generic(self, url, content_selector, retry=False):
+    def _content_generic(self, url, content_selector, retry=0):
         resp = self._get(url, retry_on_error_page=retry)
         soup = BeautifulSoup(resp.content, "html.parser")
         if content_selector and content_selector.strip():
-            el = soup.select_one(content_selector)
-            return str(el) if el else ""
-        return ""
-
-    def _content_ssfilm(self, url):
-        try:
-            return (self._get(url).json().get("data_modify", {}).get("Content", "") or "").strip()
-        except Exception:
-            return ""
-
-    def _content_mediamba(self, url):
-        data = self._get(url).json()
-        return (data.get("data", {}).get("content", "") or "").strip() if data else ""
-
-    def _content_lawyer(self, url, content_selector):
-        base = url.split("?post=")[0]
-        post_id = url.split("?post=")[-1]
-        resp = self.session.post(base, data={"pdsid": post_id}, timeout=self.timeout, verify=False)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.content, "html.parser")
-        if content_selector:
             el = soup.select_one(content_selector)
             return str(el) if el else ""
         return ""
